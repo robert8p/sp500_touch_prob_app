@@ -18,6 +18,7 @@ The scanner runs every `SCAN_INTERVAL_MINUTES` aligned to candle close. Models a
 - **US regular session only**: 09:30–16:00 America/New_York (DST handled).
 - **Demo mode**: set `DEMO_MODE=true` and the UI loads without Alpaca keys.
 - **One-click training** from the dashboard (`/train`) protected by `ADMIN_PASSWORD`.
+- **Scanner always uses the full S&P 500 universe** (including share-class tickers like `BRK.B`). `TRAIN_MAX_SYMBOLS` affects training only.
 
 ## Endpoints
 
@@ -42,7 +43,7 @@ The scanner runs every `SCAN_INTERVAL_MINUTES` aligned to candle close. Models a
 ### Training
 - `ADMIN_PASSWORD`
 - `TRAIN_LOOKBACK_DAYS` (default `60`)
-- `TRAIN_MAX_SYMBOLS` (default `200`)
+- `TRAIN_MAX_SYMBOLS` (default `0` = no cap / train on all S&P 500 symbols). Set to e.g. `200` if you want faster training.
 
 ### Storage
 - `MODEL_DIR` (default `./runtime/model` — recommend `/var/data/model` on Render persistent disk)
@@ -74,7 +75,7 @@ The scanner runs every `SCAN_INTERVAL_MINUTES` aligned to candle close. Models a
 - `SCAN_INTERVAL_MINUTES=5`
 - `ADMIN_PASSWORD=<value>`
 - `TRAIN_LOOKBACK_DAYS=60`
-- `TRAIN_MAX_SYMBOLS=200`
+- `TRAIN_MAX_SYMBOLS=0`
 
 **Debug procedure (prove UI works before live keys)**
 1. First deploy with:

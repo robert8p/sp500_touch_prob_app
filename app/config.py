@@ -30,7 +30,8 @@ class Settings:
     # Training
     admin_password: str = os.getenv("ADMIN_PASSWORD", "")
     train_lookback_days: int = _get_int("TRAIN_LOOKBACK_DAYS", 60)
-    train_max_symbols: int = _get_int("TRAIN_MAX_SYMBOLS", 200)
+    # 0 (or any <=0) means "no cap" (train on all S&P 500 constituents)
+    train_max_symbols: int = _get_int("TRAIN_MAX_SYMBOLS", 0)
 
     # Storage
     model_dir: str = os.getenv("MODEL_DIR", "./runtime/model")

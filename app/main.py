@@ -102,7 +102,9 @@ def _training_thread(settings: Settings, password: str) -> None:
         if not symbols:
             SCANNER.load_constituents()
             symbols = [c.symbol for c in SCANNER.constituents]
-        symbols = symbols[: max(1, settings.train_max_symbols)]
+        # TRAIN_MAX_SYMBOLS <= 0 means "no cap" (use all symbols)
+        if settings.train_max_symbols and settings.train_max_symbols > 0:
+            symbols = symbols[: settings.train_max_symbols]
         with STATE.lock:
             STATE.training.running = True
             STATE.training.started_at_utc = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
