@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>S&P 500 Prob Scanner</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-50 text-slate-900">
+  <div class="max-w-7xl mx-auto p-4 md:p-6">
+    <div class="flex flex-col md:flex-row md:items-end md:justify-between gap-3">
+      <div>
+        <h1 class="text-2xl md:text-3xl font-semibold">S&P 500 Prob Scanner</h1>
+        <p class="text-sm text-slate-600">Probabilities of reaching +1% / +2% from scan time to today's market close (US regular session).</p>
+      </div>
+      <div class="text-xs text-slate-600">
+        <span id="clock"></span>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mt-5">
+      <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-4">
+        <div class="flex items-center justify-between">
+          <h2 class="font-semibold">Status</h2>
+          <span id="marketBadge" class="px-2 py-1 rounded-full text-xs bg-slate-100">...</span>
+        </div>
+        <div class="mt-3 space-y-2 text-sm">
+          <div class="flex justify-between"><span class="text-slate-600">Alpaca</span><span id="alpacaStatus" class="font-medium">...</span></div>
+          <div class="flex justify-between"><span class="text-slate-600">Feed</span><span id="feedStatus" class="font-medium">...</span></div>
+          <div class="flex justify-between"><span class="text-slate-600">Last bar</span><span id="lastBar" class="font-medium">...</span></div>
+          <div class="flex justify-between"><span class="text-slate-600">Rate limit</span><span id="rateLimit" class="font-medium">...</span></div>
+          <div class="flex justify-between"><span class="text-slate-600">Time to close</span><span id="ttc" class="font-medium">...</span></div>
+          <div class="flex justify-between"><span class="text-slate-600">Models</span><span id="modelStatus" class="font-medium">...</span></div>
+          <div class="flex justify-between"><span class="text-slate-600">Universe</span><span id="universeStatus" class="font-medium">...</span></div>
+          <div class="mt-2 text-xs text-rose-700" id="lastError"></div>
+        </div>
+      </div>
+
+      <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-4">
+        <h2 class="font-semibold">Filters</h2>
+        <div class="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+          <div>
+            <label class="text-slate-600 text-xs">Min Prob (2%)</label>
+            <input id="minProb" type="number" step="0.01" min="0" max="1" value="0.00"
+              class="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2" />
+          </div>
+          <div>
+            <label class="text-slate-600 text-xs">Sector</label>
+            <select id="sector" class="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2">
+              <option value="">All</option>
+            </select>
+          </div>
+          <div>
+            <label class="text-slate-600 text-xs">Price min</label>
+            <input id="priceMin" type="number" step="0.01" min="0" value=""
+              class="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2" />
+          </div>
+          <div>
+            <label class="text-slate-600 text-xs">Price max</label>
+            <input id="priceMax" type="number" step="0.01" min="0" value=""
+              class="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2" />
+          </div>
+        </div>
+        <div class="mt-3 flex gap-2">
+          <button id="applyFilters" class="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm">Apply</button>
+          <button id="resetFilters" class="px-3 py-2 rounded-xl bg-slate-100 text-slate-900 text-sm">Reset</button>
+        </div>
+        <p class="mt-3 text-xs text-slate-500">
+          Table defaults to sorting by <span class="font-semibold">Prob 2%</span> descending.
+        </p>
+      </div>
+
+      <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-4">
+        <h2 class="font-semibold">Training</h2>
+        <p class="text-xs text-slate-600 mt-1">
+          Builds two models (pt1 and pt2). Training requires Alpaca keys and DEMO_MODE=false.
+        </p>
+        <div class="mt-3 flex gap-2">
+          <input id="adminPassword" type="password" placeholder="ADMIN_PASSWORD"
+                 class="flex-1 rounded-xl border border-slate-200 px-3 py-2 text-sm" />
+          <button id="startTraining" class="px-3 py-2 rounded-xl bg-emerald-600 text-white text-sm">Start</button>
+        </div>
+        <div class="mt-3 text-sm">
+          <div class="flex justify-between"><span class="text-slate-600">Status</span><span id="trainRunning" class="font-medium">...</span></div>
+          <div class="flex justify-between"><span class="text-slate-600">Started</span><span id="trainStarted" class="font-medium">...</span></div>
+          <div class="flex justify-between"><span class="text-slate-600">Finished</span><span id="trainFinished" class="font-medium">...</span></div>
+          <div class="mt-2 text-xs text-rose-700" id="trainError"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-4 mt-4">
+      <div class="flex items-center justify-between">
+        <h2 class="font-semibold">Scanner Results</h2>
+        <div class="text-xs text-slate-600">Last run: <span id="lastRun">...</span></div>
+      </div>
+      <div class="overflow-auto mt-3">
+        <table class="min-w-full text-sm">
+          <thead class="text-left text-slate-600 border-b">
+            <tr>
+              <th class="py-2 pr-4 cursor-pointer" data-sort="symbol">Symbol</th>
+              <th class="py-2 pr-4" data-sort="price">Price</th>
+              <th class="py-2 pr-4" data-sort="vwap">VWAP</th>
+              <th class="py-2 pr-4 cursor-pointer" data-sort="prob_1">Prob 1%</th>
+              <th class="py-2 pr-4 cursor-pointer" data-sort="prob_2">Prob 2%</th>
+              <th class="py-2 pr-4">Sector</th>
+              <th class="py-2 pr-4">Reasons</th>
+            </tr>
+          </thead>
+          <tbody id="rows" class="divide-y"></tbody>
+        </table>
+      </div>
+      <div id="emptyState" class="text-sm text-slate-600 mt-3 hidden">
+        No rows yet. If market is open, wait for the next scan; otherwise this will show last cached results.
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
