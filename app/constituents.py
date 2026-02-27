@@ -17,6 +17,21 @@ class Constituent:
     sector: str
     industry: str
 
+
+def normalize_symbol(sym: str) -> str:
+    """Normalize tickers for Alpaca.
+    - Keeps dot-class tickers like BRK.B and BF.B (Alpaca format).
+    - Converts hyphen-class tickers like BRK-B -> BRK.B.
+    """
+    s = (sym or "").strip().upper()
+    if not s:
+        return s
+    if "-" in s and s.count("-") == 1:
+        left, right = s.split("-", 1)
+        if left and len(right) == 1 and right.isalnum():
+            return f"{left}.{right}"
+    return s
+
 def load_fallback() -> List[Constituent]:
     out: List[Constituent] = []
     if not os.path.exists(FALLBACK_CSV_PATH):
@@ -29,7 +44,7 @@ def load_fallback() -> List[Constituent]:
                 continue
             out.append(
                 Constituent(
-                    symbol=sym,
+                    symbol=normalize_symbol(sym),
                     name=(row.get("Name") or row.get("Security") or row.get("name") or sym).strip(),
                     sector=(row.get("Sector") or row.get("GICS Sector") or row.get("sector") or "Unknown").strip(),
                     industry=(row.get("Industry") or row.get("GICS Sub-Industry") or row.get("industry") or "").strip(),
@@ -83,7 +98,7 @@ def try_refresh_from_wikipedia(timeout_s: int = 8) -> Tuple[Optional[List[Consti
                 continue
             out.append(
                 Constituent(
-                    symbol=sym.replace(".", "-"),  # Alpaca uses '-' for class shares (e.g., BRK-B)
+                    symbol=normalize_symbol(sym),
                     name=str(r.get(sec_col, sym)).strip() if sec_col is not None else sym,
                     sector=str(r.get(gics_sector, "Unknown")).strip() if gics_sector is not None else "Unknown",
                     industry=str(r.get(gics_ind, "")).strip() if gics_ind is not None else "",

@@ -12,7 +12,7 @@ import numpy as np
 
 from .alpaca import AlpacaClient
 from .config import Settings
-from .constituents import Constituent, load_fallback, try_refresh_from_wikipedia
+from .constituents import Constituent, load_fallback, try_refresh_from_wikipedia, normalize_symbol
 from .features import FeatureRow, compute_features_from_5m
 from .market import get_market_times, iso, next_aligned_run
 from .modeling import predict_probs
@@ -63,13 +63,11 @@ class Scanner:
             source = "wikipedia"
         elif err:
             warning = f"refresh blocked/unavailable: {err}"
-
-        # Normalize for Alpaca: '.' -> '-'
-        normed = []
+        # Normalize for Alpaca symbols (e.g., BRK-B -> BRK.B)
+        normed: List[Constituent] = []
         for c in data:
-            sym = c.symbol.replace(".", "-")
+            sym = normalize_symbol(c.symbol)
             normed.append(Constituent(symbol=sym, name=c.name, sector=c.sector, industry=c.industry))
-
         self.constituents = normed
         self.symbol_meta = {c.symbol: c for c in normed}
 

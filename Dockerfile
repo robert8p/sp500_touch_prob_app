@@ -19,4 +19,4 @@ COPY app /app/app
 RUN mkdir -p /app/runtime/model
 
 EXPOSE 8000
-CMD ["bash", "-lc", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+CMD ["bash", "-lc", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1"]

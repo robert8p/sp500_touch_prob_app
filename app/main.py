@@ -65,7 +65,7 @@ def _startup() -> None:
 def health() -> Dict[str, Any]:
     return {"ok": True, "service": "sp500-prob-scanner"}
 
-@app.get("/", response_class=HTMLResponse)
+@app.api_route("/", methods=["GET","HEAD"], response_class=HTMLResponse)
 def dashboard(request: Request) -> Any:
     return templates.TemplateResponse("index.html", {"request": request})
 
