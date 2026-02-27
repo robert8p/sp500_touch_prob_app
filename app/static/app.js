@@ -60,7 +60,6 @@ function populateSectors(rows) {
   for (const r of rows) if (r.sector) s.add(r.sector);
   const sel = document.getElementById("sector");
   const cur = sel.value;
-  // clear except first option
   while (sel.options.length > 1) sel.remove(1);
   Array.from(s).sort().forEach(sec => {
     const opt = document.createElement("option");
@@ -101,7 +100,6 @@ async function refreshStatus() {
 
   document.getElementById("lastError").textContent = s.last_error || "";
 
-  // training status
   await refreshTraining();
 }
 

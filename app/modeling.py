@@ -1,31 +1,26 @@
 from __future__ import annotations
-
 import os
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, Tuple
-
-import joblib
 import numpy as np
+import joblib
 
 from .features import FEATURE_NAMES
 
 def sigmoid(x: np.ndarray) -> np.ndarray:
     x = np.clip(x, -20, 20)
-    return 1.0 / (1.0 + np.exp(-x))
+    return 1.0/(1.0+np.exp(-x))
 
 @dataclass
 class Calibrator:
-    method: str  # "isotonic" or "platt"
+    method: str
     model: Any
-
     def predict(self, raw_scores: np.ndarray) -> np.ndarray:
-        rs = raw_scores.reshape(-1)
+        rs = raw_scores.reshape(-1).astype(float)
         if self.method == "isotonic":
-            # isotonic regression expects 1d
             p = self.model.predict(rs)
             return np.clip(p, 0.0, 1.0)
-        # platt uses logistic regression on raw score
-        p = self.model.predict_proba(rs.reshape(-1, 1))[:, 1]
+        p = self.model.predict_proba(rs.reshape(-1,1))[:,1]
         return np.clip(p, 0.0, 1.0)
 
 @dataclass
@@ -34,7 +29,6 @@ class ModelBundle:
     calibrator: Calibrator
     feature_names: list
     meta: Dict[str, Any]
-
     def predict_proba(self, X: np.ndarray) -> np.ndarray:
         raw = self.pipeline.decision_function(X)
         return self.calibrator.predict(np.asarray(raw, dtype=float))
@@ -43,58 +37,59 @@ def bundle_path(model_dir: str, threshold_pct: int) -> str:
     return os.path.join(model_dir, f"pt{threshold_pct}", "bundle.joblib")
 
 def load_bundle(model_dir: str, threshold_pct: int) -> Optional[ModelBundle]:
-    path = bundle_path(model_dir, threshold_pct)
-    if not os.path.exists(path):
+    p = bundle_path(model_dir, threshold_pct)
+    if not os.path.exists(p):
         return None
     try:
-        obj = joblib.load(path)
-        return obj
+        b = joblib.load(p)
+        # Compatibility: require same feature schema
+        if getattr(b, "feature_names", None) != list(FEATURE_NAMES):
+            return None
+        return b
     except Exception:
         return None
 
-def heuristic_prob(features: np.ndarray) -> float:
-    # Map feature vector -> pseudo-probability (stable day-1 fallback)
-    # Features: see FEATURE_NAMES
-    f = features.copy().astype(float)
-    # basic scaling/clipping
-    # momentum helps
-    ret5 = np.clip(f[0], -0.03, 0.03) / 0.01
-    ret30 = np.clip(f[1], -0.08, 0.08) / 0.02
-    ema = np.clip(f[2], -2.0, 2.0)
-    adx = np.clip(f[3], 0, 50) / 25.0
-    atr_pct = np.clip(f[4], 0.0, 0.08) / 0.02
-    rv = np.clip(f[5], 0.0, 0.08) / 0.02
-    rvol = np.clip(f[6], 0.0, 4.0) / 1.5
-    obv_sl = np.clip(f[7], -5e7, 5e7) / 2e7
-    vwap_loc = np.clip(f[8], -2.0, 2.0)
-    donch = np.clip(f[9], 0.0, 4.0)
-    spy = np.clip(f[10], -0.03, 0.03) / 0.01
-    ttc = np.clip(f[11], 0.0, 390.0) / 390.0
+def heuristic_prob(features: np.ndarray, threshold_pct: int) -> float:
+    # Conservative, scale-invariant heuristic; threshold adjusts intercept.
+    f = features.astype(float)
+    ret5, ret30, rel = f[0], f[1], f[2]
+    ema = f[3]
+    adx = np.clip(f[4], 0, 60)/30.0
+    atrp = np.clip(f[5], 0, 0.08)/0.02
+    rv = np.clip(f[6], 0, 0.10)/0.03
+    rvol = np.clip(f[7], 0, 4.0)/1.5
+    obv = np.clip(f[8], -3.0, 3.0)
+    vwap_loc = np.clip(f[9], -2.0, 2.0)
+    donch = np.clip(f[10], 0.0, 4.0)
+    ttc = np.clip(f[11], 0.0, 1.0)
+    logm = np.clip(f[12], 0.0, 7.0)/3.0
+    tod = np.clip(f[13], 0.0, 1.0)
 
-    # Heuristic: momentum + trend + participation + regime, penalize too-far-from-high and too-late-in-day
     score = (
-        0.55 * ret30 +
-        0.25 * ret5 +
-        0.25 * ema +
-        0.20 * adx +
-        0.22 * rvol +
-        0.10 * obv_sl +
-        0.18 * vwap_loc +
-        0.20 * spy -
-        0.18 * donch -
-        0.25 * (1.0 - ttc)
+        0.55*(ret30/0.02) +
+        0.25*(ret5/0.01) +
+        0.25*(rel/0.02) +
+        0.25*(ema/0.01) +
+        0.18*adx +
+        0.18*rvol +
+        0.10*obv +
+        0.15*vwap_loc +
+        0.10*logm
+        - 0.20*donch
+        - 0.25*(1.0-ttc)
+        - 0.18*atrp
+        - 0.12*rv
     )
-    return float(sigmoid(np.array([score]))[0])
+    # threshold shifts down for 2%
+    intercept = -0.4 if threshold_pct >= 2 else 0.1
+    p = sigmoid(np.array([intercept + score]))[0]
+    # conservative clamps
+    hi = 0.80 if threshold_pct >= 2 else 0.90
+    return float(np.clip(p, 0.01, hi))
 
-def predict_probs(
-    model_dir: str,
-    X: np.ndarray,
-    threshold_pct: int,
-) -> Tuple[np.ndarray, str]:
-    bundle = load_bundle(model_dir, threshold_pct)
-    if bundle is None:
-        # heuristic fallback
-        probs = np.array([heuristic_prob(x) for x in X], dtype=float)
+def predict_probs(model_dir: str, X: np.ndarray, threshold_pct: int) -> Tuple[np.ndarray, str]:
+    b = load_bundle(model_dir, threshold_pct)
+    if b is None:
+        probs = np.array([heuristic_prob(x, threshold_pct) for x in X], dtype=float)
         return probs, "heuristic"
-    probs = bundle.predict_proba(X)
-    return probs, "trained"
+    return b.predict_proba(X), "trained"

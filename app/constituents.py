@@ -1,9 +1,8 @@
 from __future__ import annotations
-
 import csv
 import os
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
+from typing import List, Optional, Tuple
 
 import requests
 
@@ -17,15 +16,11 @@ class Constituent:
     sector: str
     industry: str
 
-
 def normalize_symbol(sym: str) -> str:
-    """Normalize tickers for Alpaca.
-    - Keeps dot-class tickers like BRK.B and BF.B (Alpaca format).
-    - Converts hyphen-class tickers like BRK-B -> BRK.B.
-    """
     s = (sym or "").strip().upper()
     if not s:
         return s
+    # Convert BRK-B -> BRK.B
     if "-" in s and s.count("-") == 1:
         left, right = s.split("-", 1)
         if left and len(right) == 1 and right.isalnum():
@@ -42,68 +37,57 @@ def load_fallback() -> List[Constituent]:
             sym = (row.get("Symbol") or row.get("symbol") or "").strip()
             if not sym:
                 continue
-            out.append(
-                Constituent(
-                    symbol=normalize_symbol(sym),
-                    name=(row.get("Name") or row.get("Security") or row.get("name") or sym).strip(),
-                    sector=(row.get("Sector") or row.get("GICS Sector") or row.get("sector") or "Unknown").strip(),
-                    industry=(row.get("Industry") or row.get("GICS Sub-Industry") or row.get("industry") or "").strip(),
-                )
-            )
+            out.append(Constituent(
+                symbol=normalize_symbol(sym),
+                name=(row.get("Name") or row.get("Security") or row.get("name") or sym).strip(),
+                sector=(row.get("Sector") or row.get("GICS Sector") or row.get("sector") or "Unknown").strip(),
+                industry=(row.get("Industry") or row.get("GICS Sub-Industry") or row.get("industry") or "").strip(),
+            ))
     return out
 
-def try_refresh_from_wikipedia(timeout_s: int = 8) -> Tuple[Optional[List[Constituent]], Optional[str]]:
-    # Best-effort only. Non-fatal if blocked.
+def try_refresh_from_wikipedia(timeout_s: int=8) -> Tuple[Optional[List[Constituent]], Optional[str]]:
     try:
-        import pandas as pd  # noqa
-    except Exception:
-        return None, "pandas not available for refresh"
-
-    try:
-        resp = requests.get(WIKI_URL, timeout=timeout_s, headers={"User-Agent": "sp500-prob-scanner/1.0"})
+        import pandas as pd
+        from io import StringIO
+        resp = requests.get(WIKI_URL, timeout=timeout_s, headers={"User-Agent":"sp500-prob-scanner/1.0"})
         resp.raise_for_status()
-        tables = pd.read_html(resp.text)
+        tables = pd.read_html(StringIO(resp.text))
         if not tables:
             return None, "no tables found"
         df = tables[0]
-        # Wikipedia table typically has columns: Symbol, Security, GICS Sector, GICS Sub-Industry
-        cols = [c.lower() for c in df.columns]
-        sym_col = None
-        for candidate in ["symbol", "ticker symbol", "ticker"]:
-            if candidate in cols:
-                sym_col = df.columns[cols.index(candidate)]
+        cols = [str(c).lower() for c in df.columns]
+        sym_col = df.columns[0]
+        for c in ["symbol","ticker symbol","ticker"]:
+            if c in cols:
+                sym_col = df.columns[cols.index(c)]
                 break
-        if sym_col is None:
-            sym_col = df.columns[0]
         sec_col = None
-        for candidate in ["security", "name"]:
-            if candidate in cols:
-                sec_col = df.columns[cols.index(candidate)]
+        for c in ["security","name"]:
+            if c in cols:
+                sec_col = df.columns[cols.index(c)]
                 break
-        gics_sector = None
-        for candidate in ["gics sector", "sector"]:
-            if candidate in cols:
-                gics_sector = df.columns[cols.index(candidate)]
+        sector_col = None
+        for c in ["gics sector","sector"]:
+            if c in cols:
+                sector_col = df.columns[cols.index(c)]
                 break
-        gics_ind = None
-        for candidate in ["gics sub-industry", "sub-industry", "industry"]:
-            if candidate in cols:
-                gics_ind = df.columns[cols.index(candidate)]
+        ind_col = None
+        for c in ["gics sub-industry","sub-industry","industry"]:
+            if c in cols:
+                ind_col = df.columns[cols.index(c)]
                 break
 
         out: List[Constituent] = []
         for _, r in df.iterrows():
-            sym = str(r.get(sym_col, "")).strip()
-            if not sym or sym.lower() == "nan":
+            sym = str(r.get(sym_col,"")).strip()
+            if not sym or sym.lower()=="nan":
                 continue
-            out.append(
-                Constituent(
-                    symbol=normalize_symbol(sym),
-                    name=str(r.get(sec_col, sym)).strip() if sec_col is not None else sym,
-                    sector=str(r.get(gics_sector, "Unknown")).strip() if gics_sector is not None else "Unknown",
-                    industry=str(r.get(gics_ind, "")).strip() if gics_ind is not None else "",
-                )
-            )
+            out.append(Constituent(
+                symbol=normalize_symbol(sym),
+                name=str(r.get(sec_col, sym)).strip() if sec_col is not None else sym,
+                sector=str(r.get(sector_col, "Unknown")).strip() if sector_col is not None else "Unknown",
+                industry=str(r.get(ind_col, "")).strip() if ind_col is not None else "",
+            ))
         if len(out) < 400:
             return None, f"refresh produced too few rows ({len(out)})"
         return out, None

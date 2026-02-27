@@ -1,10 +1,8 @@
 from __future__ import annotations
-
-import json
 import os
 import threading
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 from fastapi import Depends, FastAPI, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -12,18 +10,19 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from .config import Settings
+from .market import get_market_times, iso
 from .scanner import Scanner
 from .state import AppState
 from .training import run_training
-from .market import get_market_times, iso
 
-app = FastAPI(title="S&P 500 Prob Scanner", version="1.0.0")
+app = FastAPI(title="S&P 500 Prob Scanner", version="6.0.0")
 
-templates = Jinja2Templates(directory=os.path.join(os.path.dirname(__file__), "templates"))
-app.mount("/static", StaticFiles(directory=os.path.join(os.path.dirname(__file__), "static")), name="static")
+BASE_DIR = os.path.dirname(__file__)
+templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
+app.mount("/static", StaticFiles(directory=os.path.join(BASE_DIR, "static")), name="static")
 
 STATE = AppState()
-SETTINGS = Settings()
+SETTINGS = Settings.from_env()
 SCANNER = Scanner(SETTINGS, STATE)
 
 def get_settings() -> Settings:
@@ -31,34 +30,14 @@ def get_settings() -> Settings:
 
 @app.on_event("startup")
 def _startup() -> None:
-    # Ensure model dirs exist
     os.makedirs(os.path.join(SETTINGS.model_dir, "pt1"), exist_ok=True)
     os.makedirs(os.path.join(SETTINGS.model_dir, "pt2"), exist_ok=True)
-
-    # Load cached last scores if any
-    try:
-        cache_path = os.path.join(os.path.dirname(SETTINGS.model_dir), "last_scores.json")
-        if os.path.exists(cache_path):
-            with open(cache_path, "r", encoding="utf-8") as f:
-                payload = json.load(f)
-            with STATE.lock:
-                STATE.last_run_utc = payload.get("last_run_utc")
-                # Keep rows in memory only if schema matches
-                rows = payload.get("rows") or []
-                # delay parsing into dataclasses; api/scores can use raw rows if needed
-                # We'll just store parsed rows through scanner helper on first scan. For startup, keep empty.
-    except Exception:
-        pass
-
-    # Load constituents best-effort
     try:
         SCANNER.load_constituents()
     except Exception as e:
         with STATE.lock:
-            STATE.constituents.source = "fallback"
-            STATE.constituents.warning = f"failed to load constituents: {e}"
-
-    # Start scheduler
+            STATE.constituents.source="fallback"
+            STATE.constituents.warning=f"failed to load constituents: {e}"
     SCANNER.start()
 
 @app.get("/health")
@@ -66,12 +45,11 @@ def health() -> Dict[str, Any]:
     return {"ok": True, "service": "sp500-prob-scanner"}
 
 @app.api_route("/", methods=["GET","HEAD"], response_class=HTMLResponse)
-def dashboard(request: Request) -> Any:
+def dashboard(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
 
 @app.get("/api/status")
 def api_status(settings: Settings = Depends(get_settings)) -> Dict[str, Any]:
-    # Update market status on-demand (so status is correct even if scheduler is disabled)
     now = datetime.now(timezone.utc)
     open_utc, close_utc, is_open, ttc = get_market_times(now, settings.timezone)
     with STATE.lock:
@@ -79,6 +57,7 @@ def api_status(settings: Settings = Depends(get_settings)) -> Dict[str, Any]:
         STATE.market.time_to_close_seconds = ttc
         STATE.market.market_open_time = iso(open_utc)
         STATE.market.market_close_time = iso(close_utc)
+        STATE.alpaca.feed = settings.normalized_feed()
     snap = STATE.snapshot_status()
     snap["demo_mode"] = settings.demo_mode
     snap["scan_interval_minutes"] = settings.scan_interval_minutes
@@ -95,58 +74,69 @@ def training_status() -> Dict[str, Any]:
     with STATE.lock:
         return STATE.training.__dict__.copy()
 
-def _training_thread(settings: Settings, password: str) -> None:
-    # Resolve symbols for training: use constituents limited by TRAIN_MAX_SYMBOLS
+def _training_thread(settings: Settings) -> None:
     try:
         symbols = [c.symbol for c in SCANNER.constituents]
         if not symbols:
             SCANNER.load_constituents()
             symbols = [c.symbol for c in SCANNER.constituents]
-        # TRAIN_MAX_SYMBOLS <= 0 means "no cap" (use all symbols)
         if settings.train_max_symbols and settings.train_max_symbols > 0:
             symbols = symbols[: settings.train_max_symbols]
+
         with STATE.lock:
             STATE.training.running = True
-            STATE.training.started_at_utc = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+            STATE.training.started_at_utc = datetime.now(timezone.utc).isoformat().replace("+00:00","Z")
             STATE.training.last_error = None
             STATE.training.last_result = None
             STATE.training.finished_at_utc = None
 
-        res = run_training(settings, STATE, symbols=symbols)
+        res = run_training(settings, symbols)
 
         with STATE.lock:
             STATE.training.running = False
-            STATE.training.finished_at_utc = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+            STATE.training.finished_at_utc = datetime.now(timezone.utc).isoformat().replace("+00:00","Z")
             STATE.training.last_result = res
             STATE.training.last_error = None
+
+            # reflect key meta
+            pt1 = res.get("pt1", {})
+            pt2 = res.get("pt2", {})
+            STATE.model.pt1.trained = True
+            STATE.model.pt1.path = os.path.join(settings.model_dir, "pt1")
+            STATE.model.pt1.auc_val = pt1.get("auc_val")
+            STATE.model.pt1.brier_val = pt1.get("brier_val")
+            STATE.model.pt1.calibrator = pt1.get("calibrator")
+            STATE.model.pt1.class_weight = pt1.get("class_weight")
+
+            STATE.model.pt2.trained = True
+            STATE.model.pt2.path = os.path.join(settings.model_dir, "pt2")
+            STATE.model.pt2.auc_val = pt2.get("auc_val")
+            STATE.model.pt2.brier_val = pt2.get("brier_val")
+            STATE.model.pt2.calibrator = pt2.get("calibrator")
+            STATE.model.pt2.class_weight = pt2.get("class_weight")
+
     except Exception as e:
         with STATE.lock:
             STATE.training.running = False
-            STATE.training.finished_at_utc = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+            STATE.training.finished_at_utc = datetime.now(timezone.utc).isoformat().replace("+00:00","Z")
             STATE.training.last_error = str(e)
             STATE.training.last_result = None
 
 @app.post("/train")
-def train(
-    admin_password: str = Form(""),
-    settings: Settings = Depends(get_settings),
-) -> JSONResponse:
+def train(admin_password: str = Form(""), settings: Settings = Depends(get_settings)) -> JSONResponse:
     if not settings.admin_password:
         return JSONResponse(status_code=400, content={"ok": False, "error": "ADMIN_PASSWORD is not set on the server."})
     if admin_password != settings.admin_password:
         return JSONResponse(status_code=401, content={"ok": False, "error": "Invalid admin password."})
-
-    with STATE.lock:
-        if STATE.training.running:
-            return JSONResponse(status_code=409, content={"ok": False, "error": "Training is already running."})
-
-    # Preflight: require live keys and DEMO_MODE=false
     if settings.demo_mode:
         return JSONResponse(status_code=400, content={"ok": False, "error": "Training requires DEMO_MODE=false."})
     if not (settings.alpaca_api_key and settings.alpaca_api_secret):
         return JSONResponse(status_code=400, content={"ok": False, "error": "Training requires ALPACA_API_KEY and ALPACA_API_SECRET."})
 
-    # Start background thread
-    t = threading.Thread(target=_training_thread, args=(settings, admin_password), daemon=True)
+    with STATE.lock:
+        if STATE.training.running:
+            return JSONResponse(status_code=409, content={"ok": False, "error": "Training is already running."})
+
+    t = threading.Thread(target=_training_thread, args=(settings,), daemon=True)
     t.start()
-    return JSONResponse(content={"ok": True, "message": "Training started (1% and 2%).", "status_endpoint": "/api/training/status"})
+    return JSONResponse(content={"ok": True, "message": "Training started (1% and 2%)."})

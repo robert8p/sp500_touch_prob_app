@@ -1,8 +1,6 @@
 from __future__ import annotations
-
 import threading
 from dataclasses import dataclass, field
-from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 @dataclass
@@ -35,6 +33,7 @@ class ModelThresholdStatus:
     auc_val: Optional[float] = None
     brier_val: Optional[float] = None
     calibrator: Optional[str] = None
+    class_weight: Optional[str] = None
 
 @dataclass
 class ModelStatus:
@@ -68,20 +67,19 @@ class AppState:
     market: MarketStatus = field(default_factory=MarketStatus)
     training: TrainingStatus = field(default_factory=TrainingStatus)
 
-    # scores cache
     last_run_utc: Optional[str] = None
     scores: List[ScoreRow] = field(default_factory=list)
     last_error: Optional[str] = None
-
-    def set_error(self, msg: Optional[str]) -> None:
-        with self.lock:
-            self.last_error = msg
 
     def set_scores(self, rows: List[ScoreRow], run_utc: str) -> None:
         with self.lock:
             self.scores = rows
             self.last_run_utc = run_utc
             self.last_error = None
+
+    def set_error(self, msg: str) -> None:
+        with self.lock:
+            self.last_error = msg
 
     def snapshot_scores(self) -> Dict[str, Any]:
         with self.lock:
@@ -94,17 +92,14 @@ class AppState:
     def snapshot_status(self) -> Dict[str, Any]:
         with self.lock:
             return {
-                "demo_mode": None,  # injected by api/status
+                "demo_mode": None,
                 "market_open": self.market.market_open,
                 "time_to_close_seconds": self.market.time_to_close_seconds,
                 "market_open_time": self.market.market_open_time,
                 "market_close_time": self.market.market_close_time,
                 "alpaca": self.alpaca.__dict__,
                 "constituents": self.constituents.__dict__,
-                "model": {
-                    "pt1": self.model.pt1.__dict__,
-                    "pt2": self.model.pt2.__dict__,
-                },
+                "model": {"pt1": self.model.pt1.__dict__, "pt2": self.model.pt2.__dict__},
                 "training": self.training.__dict__,
                 "last_run_utc": self.last_run_utc,
                 "last_error": self.last_error,
