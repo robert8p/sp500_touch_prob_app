@@ -9,6 +9,7 @@ def iso(dt: Optional[datetime]) -> Optional[str]:
 def get_market_times(now_utc: datetime, tz_name: str="America/New_York") -> Tuple[datetime, datetime, bool, int]:
     tz = ZoneInfo(tz_name)
     now_local = now_utc.astimezone(tz)
+
     open_local = now_local.replace(hour=9, minute=30, second=0, microsecond=0)
     close_local = now_local.replace(hour=16, minute=0, second=0, microsecond=0)
 
@@ -33,12 +34,12 @@ def next_aligned_run(now_utc: datetime, tz_name: str, interval_minutes: int, off
     tz = ZoneInfo(tz_name)
     local = now_utc.astimezone(tz)
     interval_minutes = max(1, interval_minutes)
-    minute0 = local.replace(second=0, microsecond=0)
-    m = minute0.minute
+    base = local.replace(second=0, microsecond=0)
+    m = base.minute
     nxt_m = ((m // interval_minutes) + 1) * interval_minutes
     add_h = 0
     if nxt_m >= 60:
         nxt_m %= 60
         add_h = 1
-    nxt = minute0.replace(minute=nxt_m) + timedelta(hours=add_h, seconds=offset_seconds)
+    nxt = base.replace(minute=nxt_m) + timedelta(hours=add_h, seconds=offset_seconds)
     return nxt.astimezone(ZoneInfo("UTC"))

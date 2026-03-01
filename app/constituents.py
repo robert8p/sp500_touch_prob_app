@@ -20,7 +20,7 @@ def normalize_symbol(sym: str) -> str:
     s = (sym or "").strip().upper()
     if not s:
         return s
-    # Convert BRK-B -> BRK.B
+    # Convert share-class dash notation to Alpaca dot format (BRK-B -> BRK.B)
     if "-" in s and s.count("-") == 1:
         left, right = s.split("-", 1)
         if left and len(right) == 1 and right.isalnum():
@@ -76,7 +76,6 @@ def try_refresh_from_wikipedia(timeout_s: int=8) -> Tuple[Optional[List[Constitu
             if c in cols:
                 ind_col = df.columns[cols.index(c)]
                 break
-
         out: List[Constituent] = []
         for _, r in df.iterrows():
             sym = str(r.get(sym_col,"")).strip()

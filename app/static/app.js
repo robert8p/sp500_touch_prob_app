@@ -9,6 +9,13 @@ function fmt(x, d=2) {
 }
 function fmtProb(x) { return fmt(x, 3); }
 
+function riskBadge(risk) {
+  const r = (risk || "OK").toUpperCase();
+  if (r === "HIGH") return `<span class="px-2 py-1 rounded-full text-xs bg-rose-100 text-rose-800">HIGH</span>`;
+  if (r === "CAUTION") return `<span class="px-2 py-1 rounded-full text-xs bg-amber-100 text-amber-800">CAUTION</span>`;
+  return `<span class="px-2 py-1 rounded-full text-xs bg-emerald-100 text-emerald-800">OK</span>`;
+}
+
 function applyFiltersLocal() {
   const minProb = parseFloat(document.getElementById("minProb").value || "0");
   const sector = document.getElementById("sector").value || "";
@@ -46,6 +53,7 @@ function renderRows(rows) {
       <td class="py-2 pr-4 font-semibold">${r.symbol}</td>
       <td class="py-2 pr-4">${fmt(r.price, 2)}</td>
       <td class="py-2 pr-4">${fmt(r.vwap, 2)}</td>
+      <td class="py-2 pr-4">${riskBadge(r.risk)}</td>
       <td class="py-2 pr-4">${fmtProb(r.prob_1)}</td>
       <td class="py-2 pr-4 font-semibold">${fmtProb(r.prob_2)}</td>
       <td class="py-2 pr-4">${r.sector || ""}</td>
@@ -68,6 +76,14 @@ function populateSectors(rows) {
     sel.appendChild(opt);
   });
   sel.value = cur;
+}
+
+function fmtSkipReasons(top) {
+  if (!top) return "";
+  const entries = Object.entries(top).filter(([k,v]) => v > 0);
+  if (entries.length === 0) return "";
+  entries.sort((a,b)=>b[1]-a[1]);
+  return entries.slice(0,4).map(([k,v]) => `${k}:${v}`).join(" · ");
 }
 
 async function refreshStatus() {
@@ -97,6 +113,13 @@ async function refreshStatus() {
   const uni = s.constituents || {};
   const uniText = (uni.count || 0) + " (" + (uni.source || "fallback") + ")";
   document.getElementById("universeStatus").textContent = uniText;
+
+  const cov = s.coverage || {};
+  const scored = cov.symbols_scored_count || 0;
+  const ucnt = cov.universe_count || 0;
+  document.getElementById("coverageStatus").textContent = `Scored ${scored} / ${ucnt}`;
+  document.getElementById("skipReasons").textContent = fmtSkipReasons(cov.top_skip_reasons);
+  document.getElementById("profileNote").textContent = cov.profile_note || "";
 
   document.getElementById("lastError").textContent = s.last_error || "";
 

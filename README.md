@@ -1,19 +1,37 @@
-# S&P 500 Prob Scanner (FastAPI) — v6 reliability upgrade
+# S&P 500 Prob Scanner (FastAPI) — v7
 
-This build upgrades the **probability reliability** and **cross-symbol robustness**:
-- scale-invariant trend (EMA diff normalized)
-- improved time-to-close encoding (fraction + log + time-of-day fraction)
-- relative strength vs SPY
-- OBV slope normalization
-- model selection by **Brier score** on held-out days (Platt vs isotonic; balanced vs unweighted)
+Primary goal: improve probability reliability + scientific auditability **without changing** the definition of Prob 1% / Prob 2%
+(labels remain based on future 1-minute **HIGH** to close).
+
+## What’s new in v7
+
+### 1) Time-of-day normalized RVOL (ToD-RVOL)
+- Builds per-symbol 5-minute **volume profiles** across the last `TOD_RVOL_LOOKBACK_DAYS` trading days.
+- For each symbol and each of the 78 regular-session 5m slots, stores median (and IQR).
+- Persists under: `MODEL_DIR/volume_profiles/` (survives restarts on Render persistent disk).
+- Runtime feature: `rvol_tod = current_5m_volume / baseline_slot_median_volume`
+- If profiles are missing/unavailable, scanner falls back safely and surfaces it in `/api/status`.
+
+### 2) Liquidity / microstructure risk flag (no quotes endpoint)
+Adds a **Risk** column and reason-code hints (e.g. `LOW_LIQ`, `WICKY`), using cheap bar-based proxies:
+- dollar volume
+- range %
+- wickiness (wicks / ATR)
+
+No filtering: symbols are **not** excluded, only flagged.
+
+### 3) Coverage diagnostics
+`/api/status` includes explicit coverage counts and top skip reasons.
+A password-protected endpoint `/api/debug/coverage` returns sample skipped-symbol diagnostics.
 
 ## Endpoints
 - `GET /` dashboard
 - `GET /health` health check
-- `GET /api/status` market + alpaca + model/training status
-- `GET /api/scores` rows with `prob_1` and `prob_2`
-- `POST /train` start training (password protected)
-- `GET /api/training/status` training job status
+- `GET /api/status` market + alpaca + model/training + coverage diagnostics
+- `GET /api/scores` score rows (includes Risk)
+- `POST /train` one-click training (builds pt1 + pt2 models)
+- `GET /api/training/status`
+- `GET /api/debug/coverage?password=...` (protected)
 
 ## Environment variables
 
@@ -25,6 +43,7 @@ This build upgrades the **probability reliability** and **cross-symbol robustnes
 
 ### Scanner
 - `SCAN_INTERVAL_MINUTES` (default `5`)
+- `MIN_BARS_5M` (default `7`) minimum cached 5m bars to score a symbol
 
 ### Training
 - `ADMIN_PASSWORD`
@@ -37,22 +56,36 @@ This build upgrades the **probability reliability** and **cross-symbol robustnes
 ### Debug
 - `DEMO_MODE` (default `false`)
 - `DISABLE_SCHEDULER` (default `0`)
+- `DEBUG_PASSWORD` (optional; if set, protects `/api/debug/coverage`; otherwise uses `ADMIN_PASSWORD`)
+
+### ToD-RVOL
+- `TOD_RVOL_LOOKBACK_DAYS` (default `20`)
+- `TOD_RVOL_MIN_DAYS` (default `8`) min distinct days required; else profile marked unavailable
+
+### Liquidity risk thresholds
+- `LIQ_ROLLING_BARS` (default `12`)
+- `LIQ_DVOL_MIN_USD` (default `2000000`)
+- `LIQ_RANGE_PCT_MAX` (default `0.012`)
+- `LIQ_WICK_ATR_MAX` (default `0.8`)
 
 ## Render deployment checklist
 - Web Service (single service)
 - Dockerfile build
-- Health check path: `/health`
+- Health check: `/health`
 - Persistent disk: enabled, mounted at `/var/data`
-- Env vars:
+- Recommended env vars:
   - `ALPACA_API_KEY=<value>`
   - `ALPACA_API_SECRET=<value>`
   - `ALPACA_DATA_FEED=sip`
   - `TIMEZONE=America/New_York`
   - `MODEL_DIR=/var/data/model`
   - `SCAN_INTERVAL_MINUTES=5`
+  - `MIN_BARS_5M=7`
   - `ADMIN_PASSWORD=<value>`
   - `TRAIN_LOOKBACK_DAYS=60`
   - `TRAIN_MAX_SYMBOLS=0`
+  - `TOD_RVOL_LOOKBACK_DAYS=20`
+  - `TOD_RVOL_MIN_DAYS=8`
 
 Debug-first deploy:
 - `DEMO_MODE=true`
@@ -61,5 +94,6 @@ Then switch to live:
 - `DEMO_MODE=false`
 - `DISABLE_SCHEDULER=0`
 
-## Note
-If you deploy v6 on top of older model artifacts, retrain. v6 adds/changes feature definitions, so old artifacts are treated as incompatible and the app will fall back to heuristic until retrained.
+## Notes for reviewers
+- Probabilities remain calibrated logistic models (Platt vs isotonic; class_weight none vs balanced; selection by validation Brier).
+- If model artifacts are missing or schema mismatched, the app falls back to heuristic and surfaces a warning.

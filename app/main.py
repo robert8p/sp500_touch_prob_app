@@ -2,9 +2,9 @@ from __future__ import annotations
 import os
 import threading
 from datetime import datetime, timezone
-from typing import Any, Dict
+from typing import Any, Dict, List
 
-from fastapi import Depends, FastAPI, Form, Request
+from fastapi import Depends, FastAPI, Form, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -12,10 +12,10 @@ from fastapi.templating import Jinja2Templates
 from .config import Settings
 from .market import get_market_times, iso
 from .scanner import Scanner
-from .state import AppState
+from .state import AppState, SkippedSymbol
 from .training import run_training
 
-app = FastAPI(title="S&P 500 Prob Scanner", version="6.0.0")
+app = FastAPI(title="S&P 500 Prob Scanner", version="7.0.0")
 
 BASE_DIR = os.path.dirname(__file__)
 templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
@@ -36,8 +36,8 @@ def _startup() -> None:
         SCANNER.load_constituents()
     except Exception as e:
         with STATE.lock:
-            STATE.constituents.source="fallback"
-            STATE.constituents.warning=f"failed to load constituents: {e}"
+            STATE.constituents.source = "fallback"
+            STATE.constituents.warning = f"failed to load constituents: {e}"
     SCANNER.start()
 
 @app.get("/health")
@@ -63,6 +63,14 @@ def api_status(settings: Settings = Depends(get_settings)) -> Dict[str, Any]:
     snap["scan_interval_minutes"] = settings.scan_interval_minutes
     snap["timezone"] = settings.timezone
     snap["model_dir"] = settings.model_dir
+    snap["min_bars_5m"] = settings.min_bars_5m
+    snap["tod_rvol"] = {"lookback_days": settings.tod_rvol_lookback_days, "min_days": settings.tod_rvol_min_days}
+    snap["liq_thresholds"] = {
+        "rolling_bars": settings.liq_rolling_bars,
+        "dvol_min_usd": settings.liq_dvol_min_usd,
+        "range_pct_max": settings.liq_range_pct_max,
+        "wick_atr_max": settings.liq_wick_atr_max,
+    }
     return snap
 
 @app.get("/api/scores")
@@ -73,6 +81,17 @@ def api_scores() -> Dict[str, Any]:
 def training_status() -> Dict[str, Any]:
     with STATE.lock:
         return STATE.training.__dict__.copy()
+
+@app.get("/api/debug/coverage")
+def debug_coverage(password: str = Query(""), settings: Settings = Depends(get_settings)) -> JSONResponse:
+    gate = settings.debug_gate_password()
+    if not gate:
+        return JSONResponse(status_code=400, content={"ok": False, "error": "No ADMIN_PASSWORD/DEBUG_PASSWORD configured."})
+    if password != gate:
+        return JSONResponse(status_code=401, content={"ok": False, "error": "Invalid password."})
+    with STATE.lock:
+        items = [s.__dict__ for s in STATE.skipped[:200]]
+    return JSONResponse(content={"ok": True, "count": len(items), "items": items})
 
 def _training_thread(settings: Settings) -> None:
     try:
@@ -98,7 +117,6 @@ def _training_thread(settings: Settings) -> None:
             STATE.training.last_result = res
             STATE.training.last_error = None
 
-            # reflect key meta
             pt1 = res.get("pt1", {})
             pt2 = res.get("pt2", {})
             STATE.model.pt1.trained = True

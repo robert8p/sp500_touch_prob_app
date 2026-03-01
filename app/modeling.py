@@ -2,8 +2,9 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, Tuple
-import numpy as np
+
 import joblib
+import numpy as np
 
 from .features import FEATURE_NAMES
 
@@ -36,18 +37,17 @@ class ModelBundle:
 def bundle_path(model_dir: str, threshold_pct: int) -> str:
     return os.path.join(model_dir, f"pt{threshold_pct}", "bundle.joblib")
 
-def load_bundle(model_dir: str, threshold_pct: int) -> Optional[ModelBundle]:
+def try_load_bundle(model_dir: str, threshold_pct: int) -> Tuple[Optional[ModelBundle], str]:
     p = bundle_path(model_dir, threshold_pct)
     if not os.path.exists(p):
-        return None
+        return None, "missing"
     try:
         b = joblib.load(p)
-        # Compatibility: require same feature schema
         if getattr(b, "feature_names", None) != list(FEATURE_NAMES):
-            return None
-        return b
+            return None, "incompatible"
+        return b, "ok"
     except Exception:
-        return None
+        return None, "error"
 
 def heuristic_prob(features: np.ndarray, threshold_pct: int) -> float:
     # Conservative, scale-invariant heuristic; threshold adjusts intercept.
@@ -80,16 +80,14 @@ def heuristic_prob(features: np.ndarray, threshold_pct: int) -> float:
         - 0.18*atrp
         - 0.12*rv
     )
-    # threshold shifts down for 2%
     intercept = -0.4 if threshold_pct >= 2 else 0.1
     p = sigmoid(np.array([intercept + score]))[0]
-    # conservative clamps
     hi = 0.80 if threshold_pct >= 2 else 0.90
     return float(np.clip(p, 0.01, hi))
 
-def predict_probs(model_dir: str, X: np.ndarray, threshold_pct: int) -> Tuple[np.ndarray, str]:
-    b = load_bundle(model_dir, threshold_pct)
-    if b is None:
+def predict_probs(model_dir: str, X: np.ndarray, threshold_pct: int) -> Tuple[np.ndarray, str, str]:
+    bundle, status = try_load_bundle(model_dir, threshold_pct)
+    if bundle is None:
         probs = np.array([heuristic_prob(x, threshold_pct) for x in X], dtype=float)
-        return probs, "heuristic"
-    return b.predict_proba(X), "trained"
+        return probs, "heuristic", status
+    return bundle.predict_proba(X), "trained", "ok"

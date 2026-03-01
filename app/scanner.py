@@ -14,7 +14,8 @@ from .constituents import Constituent, load_fallback, try_refresh_from_wikipedia
 from .features import compute_features_from_5m
 from .market import get_market_times, iso, next_aligned_run
 from .modeling import predict_probs
-from .state import AppState, ScoreRow
+from .state import AppState, CoverageStatus, ScoreRow, SkippedSymbol
+from .volume_profiles import VolumeProfileStore, slot_index_from_ts
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
@@ -26,7 +27,7 @@ class BarsCache:
     last_fetch_utc: Optional[datetime] = None
     last_bar_ts: Optional[str] = None
 
-    def merge(self, symbol: str, new_bars: List[dict], keep: int = 140) -> None:
+    def merge(self, symbol: str, new_bars: List[dict], keep: int = 160) -> None:
         if not new_bars:
             return
         existing = self.bars.get(symbol, [])
@@ -47,6 +48,8 @@ class Scanner:
         self.constituents: List[Constituent] = []
         self.symbol_meta: Dict[str, Constituent] = {}
         self.cache_5m = BarsCache(timeframe="5Min")
+
+        self.vol_profiles = VolumeProfileStore(settings.model_dir)
 
     def load_constituents(self) -> None:
         fallback = load_fallback()
@@ -110,12 +113,26 @@ class Scanner:
             vwap=price-0.4
             p2=min(0.95, 0.55+0.08*i)
             p1=min(0.98, p2+0.15)
-            rows.append(ScoreRow(sym, sec, float(price), float(vwap), float(p1), float(p2), "DEMO"))
+            rows.append(ScoreRow(sym, sec, float(price), float(vwap), float(p1), float(p2), "OK", "DEMO"))
         rows.sort(key=lambda r: r.prob_2, reverse=True)
         return rows
 
     def scan_once(self, open_utc: datetime, close_utc: datetime, now_utc: datetime) -> None:
         run_utc = now_utc.isoformat().replace("+00:00","Z")
+
+        # Ensure constituents loaded
+        if not self.constituents:
+            self.load_constituents()
+
+        universe_symbols = [c.symbol for c in self.constituents]
+        symbols_requested = universe_symbols + ["SPY"]
+
+        cov = CoverageStatus(
+            universe_count=len(universe_symbols),
+            symbols_requested_count=len(symbols_requested),
+        )
+        skip_counts: Dict[str,int] = {"no_bars":0, "insufficient_bars":0, "missing_price_or_vwap":0, "other_errors":0, "model_schema_incompatible":0}
+        skipped: List[SkippedSymbol] = []
 
         if self.settings.demo_mode:
             with self.state.lock:
@@ -125,7 +142,11 @@ class Scanner:
                 self.state.alpaca.last_request_utc = run_utc
                 self.state.alpaca.last_bar_timestamp = run_utc
                 self.state.alpaca.rate_limit_warn = None
-            self.state.set_scores(self._demo_scores(), run_utc)
+            rows = self._demo_scores()
+            cov.symbols_scored_count = len(rows)
+            cov.top_skip_reasons = {}
+            self.state.set_scores(rows, run_utc)
+            self.state.set_coverage(cov, [])
             return
 
         client = self._make_client()
@@ -135,16 +156,11 @@ class Scanner:
                 self.state.alpaca.ok = False
                 self.state.alpaca.message = "Missing keys"
                 self.state.alpaca.feed = self.settings.normalized_feed()
+            cov.top_skip_reasons = {"missing_keys": len(universe_symbols)}
+            self.state.set_coverage(cov, [])
             return
 
-        if not self.constituents:
-            self.load_constituents()
-
-        symbols = [c.symbol for c in self.constituents]
-        if "SPY" not in symbols:
-            symbols = symbols + ["SPY"]
-
-        # First-run backfill: cap to last ~3h; we only need ~20 bars for features
+        # First-run backfill capped to last ~3h; we only need ~20 bars for features
         if self.cache_5m.last_fetch_utc is None:
             start = max(open_utc, now_utc - timedelta(hours=3))
         else:
@@ -152,7 +168,8 @@ class Scanner:
         start = start - timedelta(minutes=10)
         end = now_utc
 
-        bars_by_sym, err, warn = client.get_bars(symbols, timeframe="5Min", start_utc=start, end_utc=end, limit=None)
+        bars_by_sym, err, warn = client.get_bars(symbols_requested, timeframe="5Min", start_utc=start, end_utc=end, limit=None)
+
         with self.state.lock:
             self.state.alpaca.feed = client.feed
             self.state.alpaca.last_request_utc = run_utc
@@ -166,7 +183,11 @@ class Scanner:
 
         if err:
             self.state.set_error(f"Alpaca error: {err}")
+            cov.top_skip_reasons = {"alpaca_error": len(universe_symbols)}
+            self.state.set_coverage(cov, [])
             return
+
+        cov.symbols_returned_with_bars_count = len([k for k,v in bars_by_sym.items() if k != "SPY" and v is not None])
 
         for sym, lst in bars_by_sym.items():
             self.cache_5m.merge(sym, lst)
@@ -178,6 +199,7 @@ class Scanner:
 
         mins_to_close = max(0.0, (close_utc - now_utc).total_seconds()/60.0)
 
+        # SPY regime (30m return)
         spy_bars = self.cache_5m.bars.get("SPY", [])
         spy_ret_30m = 0.0
         if spy_bars and len(spy_bars) >= 7:
@@ -185,26 +207,88 @@ class Scanner:
             c0= float(spy_bars[-7].get("c") or c)
             spy_ret_30m = (c/c0 - 1.0) if c0 else 0.0
 
+        # ToD profiles availability
+        avail, missing = self.vol_profiles.availability_counts()
+        cov.profile_symbols_available = avail
+        # Interpret missing relative to the current universe for auditability
+        cov.profile_symbols_missing = max(0, cov.universe_count - avail)
+        if avail == 0:
+            cov.profile_note = "ToD RVOL profiles not found; using leakage-free rolling fallback"
+
         feats=[]
         meta=[]
-        for sym in symbols:
-            if sym == "SPY":
-                continue
+        sufficient_count = 0
+        used_profile_count = 0
+
+        risk_params = (self.settings.liq_rolling_bars, self.settings.liq_dvol_min_usd, self.settings.liq_range_pct_max, self.settings.liq_wick_atr_max)
+
+        for sym in universe_symbols:
             bars = self.cache_5m.bars.get(sym, [])
-            fr = compute_features_from_5m(bars, spy_ret_30m=spy_ret_30m, mins_to_close=mins_to_close)
-            if fr is None:
+            if not bars:
+                skip_counts["no_bars"] += 1
+                skipped.append(SkippedSymbol(symbol=sym, reason="no_bars", last_bar_timestamp=None))
                 continue
+            if len(bars) < self.settings.min_bars_5m:
+                skip_counts["insufficient_bars"] += 1
+                last_ts = bars[-1].get("t") if bars else None
+                skipped.append(SkippedSymbol(symbol=sym, reason="insufficient_bars", last_bar_timestamp=last_ts))
+                continue
+            sufficient_count += 1
+
+            # Determine slot for ToD baseline from latest bar timestamp
+            last_ts = bars[-1].get("t")
+            slot_idx = None
+            if last_ts:
+                try:
+                    slot_idx = slot_index_from_ts(datetime.fromisoformat(last_ts.replace("Z","+00:00")), self.settings.timezone)
+                except Exception:
+                    slot_idx = None
+            baseline = self.vol_profiles.get_slot_median(sym, slot_idx) if slot_idx is not None else None
+
+            try:
+                fr = compute_features_from_5m(
+                    bars_5m=bars,
+                    spy_ret_30m=spy_ret_30m,
+                    mins_to_close=mins_to_close,
+                    tod_baseline_vol_median=baseline,
+                    rolling_rvol_window=20,
+                    risk_params=risk_params,
+                )
+            except Exception:
+                fr = None
+
+            if fr is None:
+                skip_counts["missing_price_or_vwap"] += 1
+                skipped.append(SkippedSymbol(symbol=sym, reason="missing_price_or_vwap", last_bar_timestamp=last_ts))
+                continue
+            if fr.used_tod_profile:
+                used_profile_count += 1
+
             sector = self.symbol_meta.get(sym).sector if sym in self.symbol_meta else "Unknown"
             feats.append(fr.features)
-            meta.append((sym, sector, fr.price, fr.vwap, fr.reasons))
+            meta.append((sym, sector, fr.price, fr.vwap, fr.risk, fr.reasons))
+
+        cov.symbols_with_sufficient_bars_count = sufficient_count
 
         if not feats:
+            cov.symbols_scored_count = 0
+            cov.top_skip_reasons = {k:v for k,v in skip_counts.items() if v>0}
             self.state.set_scores([], run_utc)
+            self.state.set_coverage(cov, skipped)
             return
 
         X = np.vstack(feats)
-        p1, src1 = predict_probs(self.settings.model_dir, X, 1)
-        p2, src2 = predict_probs(self.settings.model_dir, X, 2)
+        p1, src1, status1 = predict_probs(self.settings.model_dir, X, 1)
+        p2, src2, status2 = predict_probs(self.settings.model_dir, X, 2)
+
+        # model compatibility diagnostics
+        schema_bad = (status1 == "incompatible") or (status2 == "incompatible")
+        if schema_bad:
+            skip_counts["model_schema_incompatible"] = len(universe_symbols)
+            # don't overwrite a real error
+            with self.state.lock:
+                if not self.state.last_error:
+                    self.state.last_error = "Model schema mismatch; retrain required."
 
         with self.state.lock:
             self.state.model.pt1.trained = (src1=="trained")
@@ -213,11 +297,17 @@ class Scanner:
             self.state.model.pt2.path = os.path.join(self.settings.model_dir, "pt2")
 
         rows=[]
-        for i,(sym,sector,price,vwap,reasons) in enumerate(meta):
-            rows.append(ScoreRow(sym, sector, float(price), float(vwap), float(p1[i]), float(p2[i]), reasons))
+        for i,(sym,sector,price,vwap,risk,reasons) in enumerate(meta):
+            rows.append(ScoreRow(sym, sector, float(price), float(vwap), float(p1[i]), float(p2[i]), risk, reasons))
         rows.sort(key=lambda r: r.prob_2, reverse=True)
-        self.state.set_scores(rows, run_utc)
 
+        cov.symbols_scored_count = len(rows)
+        cov.top_skip_reasons = {k:v for k,v in skip_counts.items() if v>0}
+
+        self.state.set_scores(rows, run_utc)
+        self.state.set_coverage(cov, skipped)
+
+        # cache last scores to disk
         try:
             os.makedirs(os.path.dirname(self.settings.model_dir), exist_ok=True)
             cache_path = os.path.join(os.path.dirname(self.settings.model_dir), "last_scores.json")
