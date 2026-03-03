@@ -14,8 +14,9 @@ from .market import get_market_times, iso
 from .scanner import Scanner
 from .state import AppState
 from .training import run_training
+from .persist import load_training_last, load_model_meta, save_training_last
 
-app = FastAPI(title="S&P 500 Prob Scanner", version="8.0.0")
+app = FastAPI(title="S&P 500 Prob Scanner", version="8.0.1")
 
 BASE_DIR = os.path.dirname(__file__)
 templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
@@ -38,11 +39,37 @@ def _startup() -> None:
         with STATE.lock:
             STATE.constituents.source = "fallback"
             STATE.constituents.warning = f"failed to load constituents: {e}"
+
+    # Restore persisted training/model metadata for auditability across restarts.
+    try:
+        last = load_training_last(SETTINGS.model_dir)
+        if last:
+            with STATE.lock:
+                STATE.training.running = False
+                STATE.training.started_at_utc = last.get("started_at_utc")
+                STATE.training.finished_at_utc = last.get("finished_at_utc")
+                STATE.training.last_result = last.get("last_result")
+                STATE.training.last_error = last.get("last_error")
+    except Exception:
+        pass
+
+    for pct in (1, 2):
+        meta, st = load_model_meta(SETTINGS.model_dir, pct)
+        if meta and st == "ok":
+            with STATE.lock:
+                tgt = STATE.model.pt1 if pct == 1 else STATE.model.pt2
+                tgt.trained = True
+                tgt.path = os.path.join(SETTINGS.model_dir, f"pt{pct}")
+                tgt.auc_val = meta.get("auc_val")
+                tgt.brier_val = meta.get("brier_val")
+                tgt.calibrator = meta.get("calibrator")
+                tgt.class_weight = meta.get("class_weight")
+                tgt.alpha = meta.get("alpha")
     SCANNER.start()
 
 @app.get("/health")
 def health() -> Dict[str, Any]:
-    return {"ok": True, "service": "sp500-prob-scanner", "version": "8.0.0"}
+    return {"ok": True, "service": "sp500-prob-scanner", "version": "8.0.1"}
 
 @app.api_route("/", methods=["GET","HEAD"], response_class=HTMLResponse)
 def dashboard(request: Request):
@@ -148,12 +175,33 @@ def _training_thread(settings: Settings) -> None:
             STATE.model.pt2.class_weight = pt2.get("class_weight")
             STATE.model.pt2.alpha = pt2.get("alpha")
 
+        # Persist last training result for auditability across restarts.
+        try:
+            save_training_last(settings.model_dir, {
+                "started_at_utc": STATE.training.started_at_utc,
+                "finished_at_utc": STATE.training.finished_at_utc,
+                "last_result": res,
+                "last_error": None,
+            })
+        except Exception:
+            pass
+
     except Exception as e:
         with STATE.lock:
             STATE.training.running = False
             STATE.training.finished_at_utc = datetime.now(timezone.utc).isoformat().replace("+00:00","Z")
             STATE.training.last_error = str(e)
             STATE.training.last_result = None
+
+        try:
+            save_training_last(settings.model_dir, {
+                "started_at_utc": STATE.training.started_at_utc,
+                "finished_at_utc": STATE.training.finished_at_utc,
+                "last_result": None,
+                "last_error": str(e),
+            })
+        except Exception:
+            pass
 
 @app.post("/train")
 def train(admin_password: str = Form(""), settings: Settings = Depends(get_settings)) -> JSONResponse:
