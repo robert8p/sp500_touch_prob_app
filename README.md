@@ -1,39 +1,39 @@
-# S&P 500 Prob Scanner (FastAPI) — v7
+# S&P 500 Prob Scanner — v8 (reliability + identification)
 
-Primary goal: improve probability reliability + scientific auditability **without changing** the definition of Prob 1% / Prob 2%
-(labels remain based on future 1-minute **HIGH** to close).
+Goal: Identify stocks with a **high probability** of reaching **+1% (or +2%)** from scan time **at any point until market close**, using the label:
+- `Y=1` if max future **1-minute HIGH** from scan time to close >= (1+X)*P0 else 0 (X=0.01 / 0.02)
 
-## What’s new in v7
+## What changed vs v7
+### Identification (ranking/top-N)
+- Elastic-net logistic regression (saga) with a small hyperparameter grid.
+- Adds **auditable interaction features** (momentum×volume, momentum×VWAP, trend×ADX, momentum×time).
 
-### 1) Time-of-day normalized RVOL (ToD-RVOL)
-- Builds per-symbol 5-minute **volume profiles** across the last `TOD_RVOL_LOOKBACK_DAYS` trading days.
-- For each symbol and each of the 78 regular-session 5m slots, stores median (and IQR).
-- Persists under: `MODEL_DIR/volume_profiles/` (survives restarts on Render persistent disk).
-- Runtime feature: `rvol_tod = current_5m_volume / baseline_slot_median_volume`
-- If profiles are missing/unavailable, scanner falls back safely and surfaces it in `/api/status`.
+### Probability reliability
+- **Time-to-close bucketed calibration** (5 buckets).
+- **Prior blending (shrinkage)** by bucket: p = α·p_cal + (1−α)·p_prior, α selected by validation Brier.
 
-### 2) Liquidity / microstructure risk flag (no quotes endpoint)
-Adds a **Risk** column and reason-code hints (e.g. `LOW_LIQ`, `WICKY`), using cheap bar-based proxies:
-- dollar volume
-- range %
-- wickiness (wicks / ATR)
+### Microstructure realism (aligns to HIGH-based label)
+Adds numeric microstructure features to the model:
+- log rolling median dollar-volume
+- rolling median range%
+- rolling median wickiness/ATR
 
-No filtering: symbols are **not** excluded, only flagged.
-
-### 3) Coverage diagnostics
-`/api/status` includes explicit coverage counts and top skip reasons.
-A password-protected endpoint `/api/debug/coverage` returns sample skipped-symbol diagnostics.
+### v7 features retained
+- ToD-RVOL profiles persisted under `MODEL_DIR/volume_profiles/`
+- Liquidity risk flag + reason codes
+- Coverage diagnostics in `/api/status` and `/api/debug/coverage` (password protected)
+- Demo mode, SIP enforced, DST-safe regular session only, single worker.
 
 ## Endpoints
 - `GET /` dashboard
-- `GET /health` health check
-- `GET /api/status` market + alpaca + model/training + coverage diagnostics
-- `GET /api/scores` score rows (includes Risk)
-- `POST /train` one-click training (builds pt1 + pt2 models)
+- `GET /health`
+- `GET /api/status`
+- `GET /api/scores`
+- `POST /train`
 - `GET /api/training/status`
-- `GET /api/debug/coverage?password=...` (protected)
+- `GET /api/debug/coverage?password=...`
 
-## Environment variables
+## Env vars
 
 ### Required for live mode
 - `ALPACA_API_KEY`
@@ -43,57 +43,37 @@ A password-protected endpoint `/api/debug/coverage` returns sample skipped-symbo
 
 ### Scanner
 - `SCAN_INTERVAL_MINUTES` (default `5`)
-- `MIN_BARS_5M` (default `7`) minimum cached 5m bars to score a symbol
+- `MIN_BARS_5M` (default `7`)
 
 ### Training
 - `ADMIN_PASSWORD`
 - `TRAIN_LOOKBACK_DAYS` (default `60`)
-- `TRAIN_MAX_SYMBOLS` (default `0` = no cap / train on all S&P 500; set e.g. `200` to reduce runtime)
+- `TRAIN_MAX_SYMBOLS` (default `0` = all)
+- `CALIB_MIN_BUCKET_SAMPLES` (default `200`)
+- `ENET_C_VALUES` (default `0.5,1.0`)
+- `ENET_L1_VALUES` (default `0.0,0.5`)
+- `PRIOR_ALPHA_VALUES` (default `0.6,0.7,0.8,0.9`)
 
 ### Storage
-- `MODEL_DIR` (default `./runtime/model`; recommend `/var/data/model` on Render)
+- `MODEL_DIR` (default `./runtime/model`; recommend `/var/data/model`)
 
 ### Debug
 - `DEMO_MODE` (default `false`)
 - `DISABLE_SCHEDULER` (default `0`)
-- `DEBUG_PASSWORD` (optional; if set, protects `/api/debug/coverage`; otherwise uses `ADMIN_PASSWORD`)
+- `DEBUG_PASSWORD` (optional; else uses ADMIN_PASSWORD)
 
 ### ToD-RVOL
 - `TOD_RVOL_LOOKBACK_DAYS` (default `20`)
-- `TOD_RVOL_MIN_DAYS` (default `8`) min distinct days required; else profile marked unavailable
+- `TOD_RVOL_MIN_DAYS` (default `8`)
 
-### Liquidity risk thresholds
+### Liquidity thresholds (risk flag)
 - `LIQ_ROLLING_BARS` (default `12`)
 - `LIQ_DVOL_MIN_USD` (default `2000000`)
 - `LIQ_RANGE_PCT_MAX` (default `0.012`)
 - `LIQ_WICK_ATR_MAX` (default `0.8`)
 
-## Render deployment checklist
-- Web Service (single service)
-- Dockerfile build
+## Render checklist
+- Web Service, Dockerfile build
 - Health check: `/health`
-- Persistent disk: enabled, mounted at `/var/data`
-- Recommended env vars:
-  - `ALPACA_API_KEY=<value>`
-  - `ALPACA_API_SECRET=<value>`
-  - `ALPACA_DATA_FEED=sip`
-  - `TIMEZONE=America/New_York`
-  - `MODEL_DIR=/var/data/model`
-  - `SCAN_INTERVAL_MINUTES=5`
-  - `MIN_BARS_5M=7`
-  - `ADMIN_PASSWORD=<value>`
-  - `TRAIN_LOOKBACK_DAYS=60`
-  - `TRAIN_MAX_SYMBOLS=0`
-  - `TOD_RVOL_LOOKBACK_DAYS=20`
-  - `TOD_RVOL_MIN_DAYS=8`
-
-Debug-first deploy:
-- `DEMO_MODE=true`
-- `DISABLE_SCHEDULER=1`
-Then switch to live:
-- `DEMO_MODE=false`
-- `DISABLE_SCHEDULER=0`
-
-## Notes for reviewers
-- Probabilities remain calibrated logistic models (Platt vs isotonic; class_weight none vs balanced; selection by validation Brier).
-- If model artifacts are missing or schema mismatched, the app falls back to heuristic and surfaces a warning.
+- Persistent disk mounted at `/var/data`
+- Set `MODEL_DIR=/var/data/model`

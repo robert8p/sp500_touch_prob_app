@@ -76,6 +76,9 @@ class Scanner:
             self.state.constituents.source = source
             self.state.constituents.warning = warning
             self.state.constituents.count = len(normed)
+            # Keep coverage universe visible even before first scan.
+            self.state.coverage.universe_count = len(normed)
+            self.state.coverage.symbols_requested_count = len(normed) + 1
 
     def start(self) -> None:
         if self.settings.disable_scheduler:
@@ -120,7 +123,6 @@ class Scanner:
     def scan_once(self, open_utc: datetime, close_utc: datetime, now_utc: datetime) -> None:
         run_utc = now_utc.isoformat().replace("+00:00","Z")
 
-        # Ensure constituents loaded
         if not self.constituents:
             self.load_constituents()
 
@@ -160,7 +162,6 @@ class Scanner:
             self.state.set_coverage(cov, [])
             return
 
-        # First-run backfill capped to last ~3h; we only need ~20 bars for features
         if self.cache_5m.last_fetch_utc is None:
             start = max(open_utc, now_utc - timedelta(hours=3))
         else:
@@ -187,7 +188,8 @@ class Scanner:
             self.state.set_coverage(cov, [])
             return
 
-        cov.symbols_returned_with_bars_count = len([k for k,v in bars_by_sym.items() if k != "SPY" and v is not None])
+        # returned with bars count (exclude SPY)
+        cov.symbols_returned_with_bars_count = sum(1 for k,v in bars_by_sym.items() if k!="SPY" and v)
 
         for sym, lst in bars_by_sym.items():
             self.cache_5m.merge(sym, lst)
@@ -199,7 +201,6 @@ class Scanner:
 
         mins_to_close = max(0.0, (close_utc - now_utc).total_seconds()/60.0)
 
-        # SPY regime (30m return)
         spy_bars = self.cache_5m.bars.get("SPY", [])
         spy_ret_30m = 0.0
         if spy_bars and len(spy_bars) >= 7:
@@ -207,18 +208,15 @@ class Scanner:
             c0= float(spy_bars[-7].get("c") or c)
             spy_ret_30m = (c/c0 - 1.0) if c0 else 0.0
 
-        # ToD profiles availability
-        avail, missing = self.vol_profiles.availability_counts()
+        avail, _ = self.vol_profiles.availability_counts()
         cov.profile_symbols_available = avail
-        # Interpret missing relative to the current universe for auditability
         cov.profile_symbols_missing = max(0, cov.universe_count - avail)
         if avail == 0:
             cov.profile_note = "ToD RVOL profiles not found; using leakage-free rolling fallback"
 
         feats=[]
         meta=[]
-        sufficient_count = 0
-        used_profile_count = 0
+        sufficient_count=0
 
         risk_params = (self.settings.liq_rolling_bars, self.settings.liq_dvol_min_usd, self.settings.liq_range_pct_max, self.settings.liq_wick_atr_max)
 
@@ -230,12 +228,10 @@ class Scanner:
                 continue
             if len(bars) < self.settings.min_bars_5m:
                 skip_counts["insufficient_bars"] += 1
-                last_ts = bars[-1].get("t") if bars else None
-                skipped.append(SkippedSymbol(symbol=sym, reason="insufficient_bars", last_bar_timestamp=last_ts))
+                skipped.append(SkippedSymbol(symbol=sym, reason="insufficient_bars", last_bar_timestamp=bars[-1].get("t")))
                 continue
             sufficient_count += 1
 
-            # Determine slot for ToD baseline from latest bar timestamp
             last_ts = bars[-1].get("t")
             slot_idx = None
             if last_ts:
@@ -261,8 +257,6 @@ class Scanner:
                 skip_counts["missing_price_or_vwap"] += 1
                 skipped.append(SkippedSymbol(symbol=sym, reason="missing_price_or_vwap", last_bar_timestamp=last_ts))
                 continue
-            if fr.used_tod_profile:
-                used_profile_count += 1
 
             sector = self.symbol_meta.get(sym).sector if sym in self.symbol_meta else "Unknown"
             feats.append(fr.features)
@@ -281,11 +275,9 @@ class Scanner:
         p1, src1, status1 = predict_probs(self.settings.model_dir, X, 1)
         p2, src2, status2 = predict_probs(self.settings.model_dir, X, 2)
 
-        # model compatibility diagnostics
-        schema_bad = (status1 == "incompatible") or (status2 == "incompatible")
+        schema_bad = (status1=="incompatible") or (status2=="incompatible")
         if schema_bad:
             skip_counts["model_schema_incompatible"] = len(universe_symbols)
-            # don't overwrite a real error
             with self.state.lock:
                 if not self.state.last_error:
                     self.state.last_error = "Model schema mismatch; retrain required."
@@ -307,7 +299,6 @@ class Scanner:
         self.state.set_scores(rows, run_utc)
         self.state.set_coverage(cov, skipped)
 
-        # cache last scores to disk
         try:
             os.makedirs(os.path.dirname(self.settings.model_dir), exist_ok=True)
             cache_path = os.path.join(os.path.dirname(self.settings.model_dir), "last_scores.json")

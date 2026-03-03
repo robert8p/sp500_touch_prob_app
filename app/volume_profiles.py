@@ -9,7 +9,6 @@ from zoneinfo import ZoneInfo
 import numpy as np
 
 from .alpaca import AlpacaClient
-from .market import get_market_times
 
 def profiles_dir(model_dir: str) -> str:
     return os.path.join(model_dir, "volume_profiles")
@@ -25,9 +24,8 @@ def _parse_ts(ts: str) -> datetime:
 def slot_index_from_ts(ts_utc: datetime, tz_name: str="America/New_York") -> Optional[int]:
     tz = ZoneInfo(tz_name)
     tloc = ts_utc.astimezone(tz)
-    # regular session 09:30-16:00 => 78 slots of 5 minutes
     start = tloc.replace(hour=9, minute=30, second=0, microsecond=0)
-    mins = (tloc - start).total_seconds() / 60.0
+    mins = (tloc - start).total_seconds()/60.0
     if mins < 0 or mins >= 390:
         return None
     idx = int(mins // 5)
@@ -36,11 +34,10 @@ def slot_index_from_ts(ts_utc: datetime, tz_name: str="America/New_York") -> Opt
     return idx
 
 def _trading_days(end_local: date, lookback_days: int, tz_name: str) -> List[date]:
-    # prefer NYSE calendar
-    start = end_local - timedelta(days=lookback_days * 2)
+    start = end_local - timedelta(days=lookback_days*2)
     out: List[date] = []
     try:
-        import pandas_market_calendars as mcal  # type: ignore
+        import pandas_market_calendars as mcal
         cal = mcal.get_calendar("XNYS")
         sched = cal.schedule(start_date=start, end_date=end_local)
         for idx in sched.index:
@@ -55,15 +52,15 @@ def _trading_days(end_local: date, lookback_days: int, tz_name: str) -> List[dat
 
 def _session_utc_for_day(d: date, tz_name: str) -> Tuple[datetime, datetime]:
     tz = ZoneInfo(tz_name)
-    open_local = datetime(d.year, d.month, d.day, 9, 30, tzinfo=tz)
-    close_local = datetime(d.year, d.month, d.day, 16, 0, tzinfo=tz)
+    open_local = datetime(d.year,d.month,d.day,9,30,tzinfo=tz)
+    close_local= datetime(d.year,d.month,d.day,16,0,tzinfo=tz)
     try:
-        import pandas_market_calendars as mcal  # type: ignore
+        import pandas_market_calendars as mcal
         cal = mcal.get_calendar("XNYS")
         sched = cal.schedule(start_date=d, end_date=d)
-        if len(sched) == 1:
+        if len(sched)==1:
             open_local = sched.iloc[0]["market_open"].to_pydatetime().astimezone(tz)
-            close_local = sched.iloc[0]["market_close"].to_pydatetime().astimezone(tz)
+            close_local= sched.iloc[0]["market_close"].to_pydatetime().astimezone(tz)
     except Exception:
         pass
     return open_local.astimezone(timezone.utc), close_local.astimezone(timezone.utc)
@@ -74,8 +71,8 @@ class VolumeProfile:
     lookback_days: int
     min_days: int
     days_used: int
-    slot_median: List[Optional[float]]  # length 78
-    slot_iqr: List[Optional[float]]     # length 78
+    slot_median: List[Optional[float]]
+    slot_iqr: List[Optional[float]]
     available: bool
     computed_at_utc: str
 
@@ -90,7 +87,6 @@ def compute_profiles(
     today_local = datetime.now(timezone.utc).astimezone(tz).date()
     days = _trading_days(today_local, lookback_days, tz_name)
 
-    # volumes[sym][slot] -> list of volumes across days
     volumes: Dict[str, List[List[float]]] = {s: [[] for _ in range(78)] for s in symbols}
     day_presence: Dict[str, set] = {s: set() for s in symbols}
 
@@ -98,12 +94,10 @@ def compute_profiles(
         open_utc, close_utc = _session_utc_for_day(d, tz_name)
         bars_by_sym, err, _ = client.get_bars(symbols, timeframe="5Min", start_utc=open_utc, end_utc=close_utc)
         if err:
-            # continue best-effort: partial profiles are better than none
             continue
         for sym, bars in bars_by_sym.items():
             if sym not in volumes or not bars:
                 continue
-            # track if we saw this day (at least some bars)
             day_presence[sym].add(d.isoformat())
             for b in bars:
                 ts = b.get("t")
@@ -116,9 +110,8 @@ def compute_profiles(
                 idx = slot_index_from_ts(dt, tz_name)
                 if idx is None:
                     continue
-                v = b.get("v")
                 try:
-                    vv = float(v)
+                    vv = float(b.get("v"))
                 except Exception:
                     continue
                 if vv >= 0:
@@ -131,8 +124,8 @@ def compute_profiles(
         medians: List[Optional[float]] = []
         iqrs: List[Optional[float]] = []
         if not available:
-            medians = [None] * 78
-            iqrs = [None] * 78
+            medians = [None]*78
+            iqrs = [None]*78
         else:
             for idx in range(78):
                 vals = np.array(volumes[sym][idx], dtype=float)
@@ -141,11 +134,11 @@ def compute_profiles(
                     iqrs.append(None)
                     continue
                 med = float(np.median(vals))
-                medians.append(med if med > 0 else None)
+                medians.append(med if med>0 else None)
                 if vals.size >= 4:
-                    q75 = float(np.quantile(vals, 0.75))
-                    q25 = float(np.quantile(vals, 0.25))
-                    iqrs.append(max(0.0, q75 - q25))
+                    q75=float(np.quantile(vals,0.75))
+                    q25=float(np.quantile(vals,0.25))
+                    iqrs.append(max(0.0, q75-q25))
                 else:
                     iqrs.append(None)
 
@@ -219,5 +212,6 @@ class VolumeProfileStore:
     def availability_counts(self) -> Tuple[int, int]:
         self.load_if_changed()
         avail = sum(1 for p in self._profiles.values() if p.available)
+        # missing relative to directory content; scanner can interpret relative to universe
         missing = sum(1 for p in self._profiles.values() if not p.available)
         return avail, missing

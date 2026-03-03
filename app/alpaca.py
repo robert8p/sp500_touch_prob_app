@@ -11,9 +11,9 @@ def normalize_symbol(sym: str) -> str:
     s = (sym or "").strip().upper()
     if not s:
         return s
-    if "-" in s and s.count("-") == 1:
-        left, right = s.split("-", 1)
-        if left and len(right) == 1 and right.isalnum():
+    if "-" in s and s.count("-")==1:
+        left,right = s.split("-",1)
+        if left and len(right)==1 and right.isalnum():
             return f"{left}.{right}"
     return s
 
@@ -24,7 +24,7 @@ def _extract_invalid_symbol(err_text: str) -> Optional[str]:
     return m.group(1).strip() if m else None
 
 def _to_utc_iso(dt: datetime) -> str:
-    return dt.replace(tzinfo=timezone.utc).isoformat().replace("+00:00", "Z")
+    return dt.replace(tzinfo=timezone.utc).isoformat().replace("+00:00","Z")
 
 @dataclass
 class AlpacaClient:
@@ -33,10 +33,10 @@ class AlpacaClient:
     feed: str = "sip"
     base_url: str = "https://data.alpaca.markets"
 
-    def _headers(self) -> Dict[str, str]:
+    def _headers(self) -> Dict[str,str]:
         return {"APCA-API-KEY-ID": self.api_key, "APCA-API-SECRET-KEY": self.api_secret}
 
-    def _get(self, path: str, params: Dict[str, str], timeout_s: int = 25) -> Tuple[Optional[dict], Optional[str], Optional[str]]:
+    def _get(self, path: str, params: Dict[str,str], timeout_s: int=25) -> Tuple[Optional[dict], Optional[str], Optional[str]]:
         url = self.base_url.rstrip("/") + path
         backoff = 1.0
         warn = None
@@ -47,7 +47,7 @@ class AlpacaClient:
                 if r.status_code == 429:
                     warn = "HTTP 429 rate-limited; backing off"
                     time.sleep(backoff)
-                    backoff = min(30.0, backoff * 2)
+                    backoff = min(30.0, backoff*2)
                     continue
                 if r.status_code >= 400:
                     return None, f"HTTP {r.status_code}: {r.text[:400]}", warn
@@ -55,26 +55,26 @@ class AlpacaClient:
             except Exception as e:
                 last_err = str(e)
                 time.sleep(backoff)
-                backoff = min(30.0, backoff * 2)
+                backoff = min(30.0, backoff*2)
         return None, last_err or "request failed", warn
 
     def get_bars(
         self,
         symbols: List[str],
         timeframe: str,
-        start_utc: Optional[datetime] = None,
-        end_utc: Optional[datetime] = None,
-        limit: Optional[int] = None,
-        adjustment: str = "raw",
+        start_utc: Optional[datetime]=None,
+        end_utc: Optional[datetime]=None,
+        limit: Optional[int]=None,
+        adjustment: str="raw",
     ) -> Tuple[Dict[str, List[dict]], Optional[str], Optional[str]]:
         if not symbols:
             return {}, None, None
 
         symbols = [normalize_symbol(s) for s in symbols if s and str(s).strip()]
-        seen = set()
-        symbols = [s for s in symbols if not (s in seen or seen.add(s))]
+        seen=set()
+        symbols=[s for s in symbols if not (s in seen or seen.add(s))]
 
-        params: Dict[str, str] = {"timeframe": timeframe, "feed": (self.feed or "sip").lower(), "adjustment": adjustment}
+        params: Dict[str,str] = {"timeframe": timeframe, "feed": (self.feed or "sip").lower(), "adjustment": adjustment}
         if start_utc is not None:
             params["start"] = _to_utc_iso(start_utc)
         if end_utc is not None:
@@ -88,7 +88,7 @@ class AlpacaClient:
         warn_any = None
 
         for i in range(0, len(symbols), chunk_size):
-            base_chunk = symbols[i : i + chunk_size]
+            base_chunk = symbols[i:i+chunk_size]
             retry_chunk = list(base_chunk)
 
             for _ in range(5):
@@ -111,7 +111,7 @@ class AlpacaClient:
                     if err:
                         err_any = err
                         bad = _extract_invalid_symbol(err)
-                        if bad and bad in retry_chunk and len(retry_chunk) > 1:
+                        if bad and bad in retry_chunk and len(retry_chunk)>1:
                             retry_chunk.remove(bad)
                             merged = {}
                             page_token = None
@@ -140,7 +140,7 @@ class AlpacaClient:
 
                 if err_any:
                     bad = _extract_invalid_symbol(err_any)
-                    if not (bad and bad in base_chunk and len(retry_chunk) > 0):
+                    if not (bad and bad in base_chunk and len(retry_chunk)>0):
                         break
 
         return out, err_any, warn_any

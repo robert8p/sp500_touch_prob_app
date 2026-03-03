@@ -34,6 +34,7 @@ class ModelThresholdStatus:
     brier_val: Optional[float] = None
     calibrator: Optional[str] = None
     class_weight: Optional[str] = None
+    alpha: Optional[float] = None
 
 @dataclass
 class ModelStatus:
@@ -91,7 +92,7 @@ class AppState:
     scores: List[ScoreRow] = field(default_factory=list)
     last_error: Optional[str] = None
 
-    skipped: List[SkippedSymbol] = field(default_factory=list)  # capped list for debug endpoint
+    skipped: List[SkippedSymbol] = field(default_factory=list)
 
     def set_scores(self, rows: List[ScoreRow], run_utc: str) -> None:
         with self.lock:

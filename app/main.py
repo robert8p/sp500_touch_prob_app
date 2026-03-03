@@ -2,7 +2,7 @@ from __future__ import annotations
 import os
 import threading
 from datetime import datetime, timezone
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 from fastapi import Depends, FastAPI, Form, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -12,10 +12,10 @@ from fastapi.templating import Jinja2Templates
 from .config import Settings
 from .market import get_market_times, iso
 from .scanner import Scanner
-from .state import AppState, SkippedSymbol
+from .state import AppState
 from .training import run_training
 
-app = FastAPI(title="S&P 500 Prob Scanner", version="7.0.0")
+app = FastAPI(title="S&P 500 Prob Scanner", version="8.0.0")
 
 BASE_DIR = os.path.dirname(__file__)
 templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
@@ -42,7 +42,7 @@ def _startup() -> None:
 
 @app.get("/health")
 def health() -> Dict[str, Any]:
-    return {"ok": True, "service": "sp500-prob-scanner"}
+    return {"ok": True, "service": "sp500-prob-scanner", "version": "8.0.0"}
 
 @app.api_route("/", methods=["GET","HEAD"], response_class=HTMLResponse)
 def dashboard(request: Request):
@@ -58,6 +58,12 @@ def api_status(settings: Settings = Depends(get_settings)) -> Dict[str, Any]:
         STATE.market.market_open_time = iso(open_utc)
         STATE.market.market_close_time = iso(close_utc)
         STATE.alpaca.feed = settings.normalized_feed()
+        # ensure coverage has universe even before first scan
+        if STATE.constituents.count and not STATE.coverage.universe_count:
+            STATE.coverage.universe_count = STATE.constituents.count
+        if STATE.constituents.count and not STATE.coverage.symbols_requested_count:
+            STATE.coverage.symbols_requested_count = STATE.constituents.count + 1
+
     snap = STATE.snapshot_status()
     snap["demo_mode"] = settings.demo_mode
     snap["scan_interval_minutes"] = settings.scan_interval_minutes
@@ -70,6 +76,12 @@ def api_status(settings: Settings = Depends(get_settings)) -> Dict[str, Any]:
         "dvol_min_usd": settings.liq_dvol_min_usd,
         "range_pct_max": settings.liq_range_pct_max,
         "wick_atr_max": settings.liq_wick_atr_max,
+    }
+    snap["v8_tuning"] = {
+        "calib_min_bucket_samples": settings.calib_min_bucket_samples,
+        "enet_c_values": settings.enet_c_values,
+        "enet_l1_values": settings.enet_l1_values,
+        "prior_alpha_values": settings.prior_alpha_values,
     }
     return snap
 
@@ -119,12 +131,14 @@ def _training_thread(settings: Settings) -> None:
 
             pt1 = res.get("pt1", {})
             pt2 = res.get("pt2", {})
+
             STATE.model.pt1.trained = True
             STATE.model.pt1.path = os.path.join(settings.model_dir, "pt1")
             STATE.model.pt1.auc_val = pt1.get("auc_val")
             STATE.model.pt1.brier_val = pt1.get("brier_val")
             STATE.model.pt1.calibrator = pt1.get("calibrator")
             STATE.model.pt1.class_weight = pt1.get("class_weight")
+            STATE.model.pt1.alpha = pt1.get("alpha")
 
             STATE.model.pt2.trained = True
             STATE.model.pt2.path = os.path.join(settings.model_dir, "pt2")
@@ -132,6 +146,7 @@ def _training_thread(settings: Settings) -> None:
             STATE.model.pt2.brier_val = pt2.get("brier_val")
             STATE.model.pt2.calibrator = pt2.get("calibrator")
             STATE.model.pt2.class_weight = pt2.get("class_weight")
+            STATE.model.pt2.alpha = pt2.get("alpha")
 
     except Exception as e:
         with STATE.lock:
@@ -157,4 +172,4 @@ def train(admin_password: str = Form(""), settings: Settings = Depends(get_setti
 
     t = threading.Thread(target=_training_thread, args=(settings,), daemon=True)
     t.start()
-    return JSONResponse(content={"ok": True, "message": "Training started (1% and 2%)."})
+    return JSONResponse(content={"ok": True, "message": "Training started (pt1 and pt2)."})

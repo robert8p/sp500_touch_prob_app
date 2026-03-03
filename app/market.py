@@ -9,12 +9,11 @@ def iso(dt: Optional[datetime]) -> Optional[str]:
 def get_market_times(now_utc: datetime, tz_name: str="America/New_York") -> Tuple[datetime, datetime, bool, int]:
     tz = ZoneInfo(tz_name)
     now_local = now_utc.astimezone(tz)
-
     open_local = now_local.replace(hour=9, minute=30, second=0, microsecond=0)
     close_local = now_local.replace(hour=16, minute=0, second=0, microsecond=0)
 
     try:
-        import pandas_market_calendars as mcal  # type: ignore
+        import pandas_market_calendars as mcal
         cal = mcal.get_calendar("XNYS")
         sched = cal.schedule(start_date=now_local.date(), end_date=now_local.date())
         if len(sched) == 1:
