@@ -75,7 +75,6 @@ def try_refresh_from_wikipedia(timeout_s: int=8) -> Tuple[Optional[List[Constitu
             if c in cols:
                 ind_col = df.columns[cols.index(c)]
                 break
-
         out: List[Constituent] = []
         for _, r in df.iterrows():
             sym = str(r.get(sym_col,"")).strip()

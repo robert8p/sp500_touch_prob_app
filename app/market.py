@@ -11,7 +11,6 @@ def get_market_times(now_utc: datetime, tz_name: str="America/New_York") -> Tupl
     now_local = now_utc.astimezone(tz)
     open_local = now_local.replace(hour=9, minute=30, second=0, microsecond=0)
     close_local = now_local.replace(hour=16, minute=0, second=0, microsecond=0)
-
     try:
         import pandas_market_calendars as mcal
         cal = mcal.get_calendar("XNYS")
@@ -24,7 +23,6 @@ def get_market_times(now_utc: datetime, tz_name: str="America/New_York") -> Tupl
     except Exception:
         if now_local.weekday() >= 5:
             return open_local.astimezone(ZoneInfo("UTC")), close_local.astimezone(ZoneInfo("UTC")), False, 0
-
     is_open = (now_local >= open_local) and (now_local < close_local)
     ttc = int(max(0, (close_local - now_local).total_seconds())) if is_open else 0
     return open_local.astimezone(ZoneInfo("UTC")), close_local.astimezone(ZoneInfo("UTC")), is_open, ttc

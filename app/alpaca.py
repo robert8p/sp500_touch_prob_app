@@ -20,7 +20,7 @@ def normalize_symbol(sym: str) -> str:
 def _extract_invalid_symbol(err_text: str) -> Optional[str]:
     if not err_text:
         return None
-    m = re.search(r'invalid symbol\s*:\s*([^"\s}]+)', err_text, flags=re.IGNORECASE)
+    m = re.search(r'invalid symbol\\s*:\\s*([^"\\s}]+)', err_text, flags=re.IGNORECASE)
     return m.group(1).strip() if m else None
 
 def _to_utc_iso(dt: datetime) -> str:
@@ -58,22 +58,11 @@ class AlpacaClient:
                 backoff = min(30.0, backoff*2)
         return None, last_err or "request failed", warn
 
-    def get_bars(
-        self,
-        symbols: List[str],
-        timeframe: str,
-        start_utc: Optional[datetime]=None,
-        end_utc: Optional[datetime]=None,
-        limit: Optional[int]=None,
-        adjustment: str="raw",
-    ) -> Tuple[Dict[str, List[dict]], Optional[str], Optional[str]]:
+    def get_bars(self, symbols: List[str], timeframe: str, start_utc: Optional[datetime]=None, end_utc: Optional[datetime]=None, limit: Optional[int]=None, adjustment: str="raw") -> Tuple[Dict[str, List[dict]], Optional[str], Optional[str]]:
         if not symbols:
             return {}, None, None
-
         symbols = [normalize_symbol(s) for s in symbols if s and str(s).strip()]
-        seen=set()
-        symbols=[s for s in symbols if not (s in seen or seen.add(s))]
-
+        seen=set(); symbols=[s for s in symbols if not (s in seen or seen.add(s))]
         params: Dict[str,str] = {"timeframe": timeframe, "feed": (self.feed or "sip").lower(), "adjustment": adjustment}
         if start_utc is not None:
             params["start"] = _to_utc_iso(start_utc)
@@ -81,33 +70,26 @@ class AlpacaClient:
             params["end"] = _to_utc_iso(end_utc)
         if limit is not None:
             params["limit"] = str(limit)
-
         out: Dict[str, List[dict]] = {}
         chunk_size = 200
         err_any = None
         warn_any = None
-
         for i in range(0, len(symbols), chunk_size):
             base_chunk = symbols[i:i+chunk_size]
             retry_chunk = list(base_chunk)
-
             for _ in range(5):
                 params["symbols"] = ",".join(retry_chunk)
-
                 page_token: Optional[str] = None
                 pages = 0
                 merged: Dict[str, List[dict]] = {}
-
                 while True:
                     if page_token:
                         params["page_token"] = page_token
                     else:
                         params.pop("page_token", None)
-
                     js, err, warn = self._get("/v2/stocks/bars", params=params)
                     if warn and not warn_any:
                         warn_any = warn
-
                     if err:
                         err_any = err
                         bad = _extract_invalid_symbol(err)
@@ -119,12 +101,10 @@ class AlpacaClient:
                         merged = {}
                         page_token = None
                         break
-
                     bars = js.get("bars", {}) if isinstance(js, dict) else {}
                     for sym, lst in bars.items():
                         if lst:
                             merged.setdefault(sym, []).extend(lst)
-
                     page_token = js.get("next_page_token") if isinstance(js, dict) else None
                     pages += 1
                     if not page_token:
@@ -132,15 +112,12 @@ class AlpacaClient:
                     if pages >= 20:
                         warn_any = warn_any or "pagination cap hit"
                         break
-
                 if merged:
                     for sym, lst in merged.items():
                         out[sym] = lst
                     break
-
                 if err_any:
                     bad = _extract_invalid_symbol(err_any)
                     if not (bad and bad in base_chunk and len(retry_chunk)>0):
                         break
-
         return out, err_any, warn_any

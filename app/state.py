@@ -75,23 +75,21 @@ class ScoreRow:
     prob_1: float
     prob_2: float
     risk: str
+    risk_reasons: str
     reasons: str
 
 @dataclass
 class AppState:
     lock: threading.Lock = field(default_factory=threading.Lock)
-
     alpaca: AlpacaStatus = field(default_factory=AlpacaStatus)
     constituents: ConstituentsStatus = field(default_factory=ConstituentsStatus)
     model: ModelStatus = field(default_factory=ModelStatus)
     market: MarketStatus = field(default_factory=MarketStatus)
     training: TrainingStatus = field(default_factory=TrainingStatus)
     coverage: CoverageStatus = field(default_factory=CoverageStatus)
-
     last_run_utc: Optional[str] = None
     scores: List[ScoreRow] = field(default_factory=list)
     last_error: Optional[str] = None
-
     skipped: List[SkippedSymbol] = field(default_factory=list)
 
     def set_scores(self, rows: List[ScoreRow], run_utc: str) -> None:
