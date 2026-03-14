@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>S&P 500 Prob Scanner v9.6.3</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-50 text-slate-900">
+  <div class="max-w-7xl mx-auto p-4 md:p-6">
+    <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+      <div>
+        <h1 class="text-2xl font-bold">S&P 500 Prob Scanner <span class="text-slate-500">v9.6.3</span></h1>
+        <p class="text-sm text-slate-600">Single-target scanner for the probability a stock reaches +1% from scan time before today’s regular-session close.</p>
+      </div>
+      <div class="flex items-center gap-3 text-sm">
+        <span id="marketBadge" class="px-2 py-1 rounded-full bg-slate-100 text-slate-700">...</span>
+        <span class="text-slate-600">Now: <span id="clock" class="font-medium"></span></span>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mt-4">
+      <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-4">
+        <h2 class="font-semibold">Status</h2>
+        <div class="mt-3 grid grid-cols-2 gap-y-2 text-sm">
+          <div class="text-slate-600">Market</div><div id="ttc" class="font-medium">...</div>
+          <div class="text-slate-600">Alpaca</div><div id="alpacaStatus" class="font-medium">...</div>
+          <div class="text-slate-600">Feed</div><div id="feedStatus" class="font-medium">...</div>
+          <div class="text-slate-600">Last bar</div><div id="lastBar" class="font-medium">...</div>
+          <div class="text-slate-600">Model</div><div id="modelStatus" class="font-medium">...</div>
+          <div class="text-slate-600">Universe</div><div id="universeStatus" class="font-medium">...</div>
+          <div class="text-slate-600">Coverage</div><div id="coverageStatus" class="font-medium">...</div>
+        </div>
+        <div class="mt-3 text-xs text-slate-600">
+          <div><span class="font-medium">Tail counts:</span> <span id="tailCounts"></span></div>
+          <div class="mt-1"><span class="font-medium">Acceptable:</span> <span id="acceptableTailCounts"></span></div>
+          <div class="mt-1"><span class="font-medium">Guardrails:</span> <span id="guardrailStats"></span></div>
+          <div class="mt-1"><span class="font-medium">Skip reasons:</span> <span id="skipReasons"></span></div>
+          <div class="mt-1"><span class="font-medium">Profiles:</span> <span id="profileNote"></span></div>
+          <div class="mt-1 text-rose-700" id="rateLimit"></div>
+          <div class="mt-1 text-rose-700" id="lastError"></div>
+        </div>
+      </div>
+
+      <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-4">
+        <h2 class="font-semibold">Filters</h2>
+        <div class="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+          <div>
+            <label class="text-slate-600 text-xs">Min Prob (1%)</label>
+            <input id="minProb" type="number" step="0.01" min="0" max="1" value="0.00" class="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2" />
+          </div>
+          <div>
+            <label class="text-slate-600 text-xs">Sector</label>
+            <select id="sector" class="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2"><option value="">All</option></select>
+          </div>
+          <div>
+            <label class="text-slate-600 text-xs">Price min</label>
+            <input id="priceMin" type="number" step="0.01" min="0" value="" class="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2" />
+          </div>
+          <div>
+            <label class="text-slate-600 text-xs">Price max</label>
+            <input id="priceMax" type="number" step="0.01" min="0" value="" class="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2" />
+          </div>
+        </div>
+        <div class="mt-3 flex gap-2">
+          <button id="applyFilters" class="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm">Apply</button>
+          <button id="resetFilters" class="px-3 py-2 rounded-xl bg-slate-100 text-slate-900 text-sm">Reset</button>
+        </div>
+      </div>
+
+      <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-4">
+        <h2 class="font-semibold">Training</h2>
+        <p class="text-xs text-slate-600 mt-1">Builds pt1 only plus ToD volume profiles. Requires Alpaca keys and DEMO_MODE=false.</p>
+        <div class="mt-3 flex gap-2">
+          <input id="adminPassword" type="password" placeholder="ADMIN_PASSWORD" class="flex-1 rounded-xl border border-slate-200 px-3 py-2 text-sm" />
+          <button id="startTraining" class="px-3 py-2 rounded-xl bg-emerald-600 text-white text-sm">Start</button>
+        </div>
+        <div class="mt-3 text-sm">
+          <div class="flex justify-between"><span class="text-slate-600">Status</span><span id="trainRunning" class="font-medium">...</span></div>
+          <div class="flex justify-between"><span class="text-slate-600">Started</span><span id="trainStarted" class="font-medium">...</span></div>
+          <div class="flex justify-between"><span class="text-slate-600">Finished</span><span id="trainFinished" class="font-medium">...</span></div>
+          <div class="mt-2 text-xs text-rose-700" id="trainError"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-4 mt-4">
+      <div class="flex items-center justify-between">
+        <h2 class="font-semibold">Scanner Results</h2>
+        <div class="text-xs text-slate-600">Last run: <span id="lastRun">...</span></div>
+      </div>
+      <div class="overflow-auto mt-3">
+        <table class="min-w-full text-sm">
+          <thead class="text-left text-slate-600 border-b">
+            <tr>
+              <th class="py-2 pr-4 cursor-pointer" data-sort="symbol">Symbol</th>
+              <th class="py-2 pr-4 cursor-pointer" data-sort="price">Price</th>
+              <th class="py-2 pr-4 cursor-pointer" data-sort="vwap">VWAP</th>
+              <th class="py-2 pr-4 cursor-pointer" data-sort="prob_1">Prob 1%</th>
+              <th class="py-2 pr-4">Risk</th>
+              <th class="py-2 pr-4">Risk reason</th>
+              <th class="py-2 pr-4">Downside</th>
+              <th class="py-2 pr-4">Uncertainty</th>
+              <th class="py-2 pr-4">Sector</th>
+              <th class="py-2 pr-4">Reasons</th>
+            </tr>
+          </thead>
+          <tbody id="rows" class="divide-y"></tbody>
+        </table>
+      </div>
+      <div id="emptyState" class="text-sm text-slate-600 mt-3 hidden">No rows yet. If market is open, wait for the next scan; otherwise this shows the last cached Stage 2 candidate set.</div>
+    </div>
+
+    <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-4 mt-4">
+      <div class="flex items-center justify-between gap-4 flex-wrap">
+        <div>
+          <h2 class="font-semibold">Diagnostic Journal</h2>
+          <p class="text-xs text-slate-600 mt-1">Automatic live-scan snapshots, tracked high-probability names, and post-close path-quality review.</p>
+        </div>
+        <div class="text-xs text-slate-600">Trade day: <span id="diagTradeDate" class="font-medium">—</span></div>
+      </div>
+      <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-3 mt-4 text-sm">
+        <div class="rounded-xl bg-slate-50 border border-slate-200 p-3"><div class="text-slate-500 text-xs">Snapshots</div><div id="diagSnapshots" class="font-semibold text-lg">0</div></div>
+        <div class="rounded-xl bg-slate-50 border border-slate-200 p-3"><div class="text-slate-500 text-xs">Tracked</div><div id="diagTracked" class="font-semibold text-lg">0</div></div>
+        <div class="rounded-xl bg-slate-50 border border-slate-200 p-3"><div class="text-slate-500 text-xs">Cap-bound</div><div id="diagCapBound" class="font-semibold text-lg">0</div></div>
+        <div class="rounded-xl bg-slate-50 border border-slate-200 p-3"><div class="text-slate-500 text-xs">Evaluated</div><div id="diagEvaluated" class="font-semibold text-lg">No</div></div>
+        <div class="rounded-xl bg-slate-50 border border-slate-200 p-3"><div class="text-slate-500 text-xs">Clean touch</div><div id="diagClean" class="font-semibold text-lg">0</div></div>
+        <div class="rounded-xl bg-slate-50 border border-slate-200 p-3"><div class="text-slate-500 text-xs">Ugly touch</div><div id="diagUgly" class="font-semibold text-lg">0</div></div>
+        <div class="rounded-xl bg-slate-50 border border-slate-200 p-3"><div class="text-slate-500 text-xs">No touch</div><div id="diagNoTouch" class="font-semibold text-lg">0</div></div>
+        <div class="rounded-xl bg-slate-50 border border-slate-200 p-3"><div class="text-slate-500 text-xs">Worth review</div><div id="diagWorth" class="font-semibold text-lg">0</div></div>
+      </div>
+      <div class="mt-3 text-xs text-slate-600">Latest snapshot: <span id="diagLatestSnapshot">—</span></div>
+
+      <div class="mt-4">
+        <h3 class="font-medium text-sm">Tracked names</h3>
+        <div class="overflow-auto mt-2">
+          <table class="min-w-full text-sm">
+            <thead class="text-left text-slate-600 border-b">
+              <tr>
+                <th class="py-2 pr-4">Symbol</th>
+                <th class="py-2 pr-4">Best Prob</th>
+                <th class="py-2 pr-4">Raw</th>
+                <th class="py-2 pr-4">Cap-bound</th>
+                <th class="py-2 pr-4">Seen</th>
+                <th class="py-2 pr-4">Risk set</th>
+                <th class="py-2 pr-4">Max downside</th>
+                <th class="py-2 pr-4">Uncertainty</th>
+              </tr>
+            </thead>
+            <tbody id="diagTrackedRows" class="divide-y"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="mt-4">
+        <h3 class="font-medium text-sm">Post-close review</h3>
+        <div class="overflow-auto mt-2">
+          <table class="min-w-full text-sm">
+            <thead class="text-left text-slate-600 border-b">
+              <tr>
+                <th class="py-2 pr-4">Symbol</th>
+                <th class="py-2 pr-4">Best Prob</th>
+                <th class="py-2 pr-4">Touch +1%</th>
+                <th class="py-2 pr-4">Path</th>
+                <th class="py-2 pr-4">MAE before touch</th>
+                <th class="py-2 pr-4">Held above scan</th>
+                <th class="py-2 pr-4">Close vs scan</th>
+                <th class="py-2 pr-4">Bucket</th>
+              </tr>
+            </thead>
+            <tbody id="diagEvaluationRows" class="divide-y"></tbody>
+          </table>
+        </div>
+        <div id="diagEmpty" class="text-sm text-slate-600 mt-3 hidden">No diagnostic review yet for the latest tracked trade day.</div>
+      </div>
+    </div>
+  </div>
+  <script src="/static/app.js"></script>
+</body>
+</html>
