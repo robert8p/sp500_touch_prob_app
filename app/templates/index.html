@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>S&P 500 Prob Scanner v13.1</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          boxShadow: {
+            soft: '0 10px 30px rgba(15, 23, 42, 0.10)',
+            glow: '0 0 0 1px rgba(255,255,255,0.06), 0 18px 60px rgba(15,23,42,0.32)'
+          },
+          colors: {
+            ink: '#0f172a'
+          },
+          backgroundImage: {
+            grid: 'linear-gradient(rgba(148,163,184,0.08) 1px, transparent 1px), linear-gradient(90deg, rgba(148,163,184,0.08) 1px, transparent 1px)'
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    ::-webkit-scrollbar { width: 10px; height: 10px; }
+    ::-webkit-scrollbar-track { background: rgba(15, 23, 42, 0.08); border-radius: 999px; }
+    ::-webkit-scrollbar-thumb { background: rgba(100, 116, 139, 0.55); border-radius: 999px; }
+    .panel {
+      background: linear-gradient(180deg, rgba(255,255,255,0.92), rgba(255,255,255,0.84));
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+    }
+    .panel-dark {
+      background: linear-gradient(180deg, rgba(15,23,42,0.92), rgba(15,23,42,0.82));
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+    }
+    .status-dot::before {
+      content: '';
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
+      margin-right: 8px;
+      vertical-align: middle;
+      background: currentColor;
+      box-shadow: 0 0 0 4px rgba(255,255,255,0.08);
+    }
+  </style>
+</head>
+<body class="min-h-screen bg-slate-950 text-slate-100 selection:bg-cyan-300 selection:text-slate-950">
+  <div class="fixed inset-0 -z-10 overflow-hidden">
+    <div class="absolute inset-0 bg-slate-950"></div>
+    <div class="absolute inset-0 bg-grid bg-[size:36px_36px] opacity-20"></div>
+    <div class="absolute -top-32 left-1/2 h-[34rem] w-[34rem] -translate-x-1/2 rounded-full bg-cyan-500/15 blur-3xl"></div>
+    <div class="absolute top-24 -left-24 h-[22rem] w-[22rem] rounded-full bg-indigo-500/15 blur-3xl"></div>
+    <div class="absolute bottom-0 right-0 h-[26rem] w-[26rem] rounded-full bg-emerald-500/10 blur-3xl"></div>
+  </div>
+
+  <div class="max-w-[1600px] mx-auto px-4 py-5 md:px-6 lg:px-8">
+    <div class="panel-dark rounded-[28px] border border-white/10 shadow-glow overflow-hidden">
+      <div class="border-b border-white/10 bg-white/[0.02]">
+        <div class="px-5 py-5 md:px-7 md:py-6 flex flex-col gap-5 xl:flex-row xl:items-center xl:justify-between">
+          <div class="max-w-4xl">
+            <div class="flex flex-wrap items-center gap-2 text-xs font-medium tracking-wide text-slate-300">
+              <span class="rounded-full border border-cyan-400/25 bg-cyan-400/10 px-3 py-1 text-cyan-200">DECOMPOSED TOUCH×PATH</span>
+              <span class="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-slate-200">S&amp;P 500</span>
+              <span class="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-slate-200">v13.1</span>
+            </div>
+            <h1 class="mt-3 text-3xl font-semibold tracking-tight text-white md:text-4xl">S&amp;P 500 Prob Scanner</h1>
+            <p class="mt-2 max-w-3xl text-sm leading-6 text-slate-300 md:text-base">Decomposed model: <span class="text-cyan-200">P(touch)</span> × <span class="text-cyan-200">P(clean path | touch)</span>, now with a market-wide geopolitical regime overlay that can haircut, cap, or suppress signals when proxy stress is elevated.</p>
+          </div>
+          <div class="grid grid-cols-1 gap-3 sm:grid-cols-3 xl:min-w-[520px]">
+            <div class="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
+              <div class="text-[11px] uppercase tracking-[0.18em] text-slate-400">Market state</div>
+              <div class="mt-2 flex items-center gap-2">
+                <span id="marketBadge" class="inline-flex items-center rounded-full border border-white/10 bg-white/10 px-3 py-1 text-xs font-semibold text-slate-100">...</span>
+                <span class="text-xs text-slate-400">Live session status</span>
+              </div>
+            </div>
+            <div class="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
+              <div class="text-[11px] uppercase tracking-[0.18em] text-slate-400">Clock</div>
+              <div id="clock" class="mt-2 text-sm font-semibold text-white">...</div>
+              <div class="text-xs text-slate-400">Browser local time</div>
+            </div>
+            <div class="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
+              <div class="text-[11px] uppercase tracking-[0.18em] text-slate-400">Selection tier</div>
+              <div id="selectionTier" class="mt-2 text-sm font-semibold text-white">...</div>
+              <div id="selectionWarningTop" class="mt-1 text-xs text-slate-400">Waiting for status</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="px-5 py-5 md:px-7 md:py-6">
+        <div id="regimeBanner" class="mb-5 rounded-[24px] border border-cyan-200/20 bg-cyan-400/10 px-5 py-4 text-slate-100">
+          <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <div class="text-[11px] uppercase tracking-[0.18em] text-cyan-100/80">Market-wide regime overlay</div>
+              <div class="mt-2 flex items-center gap-3">
+                <span id="regimeBadge" class="inline-flex items-center rounded-full border border-cyan-300/30 bg-cyan-300/15 px-3 py-1 text-xs font-semibold text-slate-100">NOT_EVALUATED</span>
+                <span id="regimeTitle" class="text-sm font-semibold text-white">Regime not yet evaluated</span>
+              </div>
+              <div id="regimeSummary" class="mt-2 text-sm text-slate-200">Waiting for regime status…</div>
+            </div>
+            <div class="grid grid-cols-1 gap-2 text-sm sm:grid-cols-3">
+              <div class="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
+                <div class="text-[11px] uppercase tracking-[0.16em] text-slate-300">Touch multiplier</div>
+                <div id="regimeMultiplier" class="mt-1 text-base font-semibold text-white">1.00x</div>
+              </div>
+              <div class="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
+                <div class="text-[11px] uppercase tracking-[0.16em] text-slate-300">Prob cap</div>
+                <div id="regimeCap" class="mt-1 text-base font-semibold text-white">—</div>
+              </div>
+              <div class="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
+                <div class="text-[11px] uppercase tracking-[0.16em] text-slate-300">Signal policy</div>
+                <div id="regimeSignalPolicy" class="mt-1 text-base font-semibold text-white">Normal</div>
+              </div>
+            </div>
+          </div>
+          <div id="regimeProxyNote" class="mt-3 text-xs leading-5 text-slate-300">Proxy set: SPY, oil, volatility, safe haven, and energy leadership.</div>
+        </div>
+
+
+        <div class="grid grid-cols-2 gap-3 xl:grid-cols-5">
+          <div class="panel rounded-2xl border border-white/15 p-4 shadow-soft text-slate-900">
+            <div class="text-[11px] uppercase tracking-[0.16em] text-slate-500">Displayed rows</div>
+            <div id="kpiRows" class="mt-2 text-2xl font-semibold text-slate-950">0</div>
+            <div class="mt-1 text-xs text-slate-500">Shown on screen</div>
+          </div>
+          <div class="panel rounded-2xl border border-white/15 p-4 shadow-soft text-slate-900">
+            <div class="text-[11px] uppercase tracking-[0.16em] text-slate-500">Actionable tail</div>
+            <div id="kpiActionable" class="mt-2 text-2xl font-semibold text-slate-950">0</div>
+            <div class="mt-1 text-xs text-slate-500">No signals yet</div>
+          </div>
+          <div class="panel rounded-2xl border border-white/15 p-4 shadow-soft text-slate-900">
+            <div class="text-[11px] uppercase tracking-[0.16em] text-slate-500">Average prob</div>
+            <div id="kpiAvgProb" class="mt-2 text-2xl font-semibold text-slate-950">0.0%</div>
+            <div class="mt-1 text-xs text-slate-500">Average touch probability</div>
+          </div>
+          <div class="panel rounded-2xl border border-white/15 p-4 shadow-soft text-slate-900">
+            <div class="text-[11px] uppercase tracking-[0.16em] text-slate-500">Top candidate</div>
+            <div id="kpiTopSymbol" class="mt-2 text-2xl font-semibold text-slate-950">—</div>
+            <div id="kpiTopProb" class="mt-1 text-xs text-slate-500">Waiting for scores</div>
+          </div>
+          <div class="panel rounded-2xl border border-white/15 p-4 shadow-soft text-slate-900 col-span-2 xl:col-span-1">
+            <div class="text-[11px] uppercase tracking-[0.16em] text-slate-500">Diagnostic edge</div>
+            <div id="kpiDiagHealth" class="mt-2 text-2xl font-semibold text-slate-950">—</div>
+            <div id="kpiDiagNote" class="mt-1 text-xs text-slate-500">Clean vs ugly touch mix</div>
+          </div>
+        </div>
+
+        <div class="mt-5 grid grid-cols-1 gap-4 xl:grid-cols-[1.25fr_1fr_1fr]">
+          <section class="panel rounded-[24px] border border-white/15 p-5 shadow-soft text-slate-900">
+            <div class="flex items-start justify-between gap-4">
+              <div>
+                <div class="text-[11px] uppercase tracking-[0.18em] text-slate-500">System health</div>
+                <h2 class="mt-1 text-lg font-semibold text-slate-950">Status</h2>
+              </div>
+              <div class="rounded-full bg-slate-900 px-3 py-1 text-xs font-medium text-white">Live monitor</div>
+            </div>
+            <div class="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div class="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <div class="text-xs uppercase tracking-[0.16em] text-slate-500">Session</div>
+                <div id="ttc" class="mt-2 text-xl font-semibold text-slate-950">...</div>
+                <div class="mt-1 text-xs text-slate-500">Time to close when market is open</div>
+              </div>
+              <div class="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <div class="text-xs uppercase tracking-[0.16em] text-slate-500">Model</div>
+                <div id="modelStatus" class="mt-2 text-xl font-semibold text-slate-950">...</div>
+                <div id="liveCapStatus" class="mt-1 text-xs text-slate-500">Probability contract</div>
+              </div>
+            </div>
+            <div class="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2 text-sm">
+              <div class="rounded-2xl border border-slate-200 bg-white p-4">
+                <div class="space-y-2">
+                  <div class="flex items-center justify-between gap-4"><span class="text-slate-500">Alpaca</span><span id="alpacaStatus" class="font-medium text-slate-900">...</span></div>
+                  <div class="flex items-center justify-between gap-4"><span class="text-slate-500">Feed</span><span id="feedStatus" class="font-medium text-slate-900">...</span></div>
+                  <div class="flex items-center justify-between gap-4"><span class="text-slate-500">Last bar</span><span id="lastBar" class="font-medium text-slate-900 text-right">...</span></div>
+                  <div class="flex items-center justify-between gap-4"><span class="text-slate-500">Universe</span><span id="universeStatus" class="font-medium text-slate-900">...</span></div>
+                  <div class="flex items-center justify-between gap-4"><span class="text-slate-500">Coverage</span><span id="coverageStatus" class="font-medium text-slate-900 text-right">...</span></div>
+                </div>
+              </div>
+              <div class="rounded-2xl border border-slate-200 bg-white p-4">
+                <div class="space-y-3 text-xs text-slate-600">
+                  <div><span class="font-semibold text-slate-800">Tail counts</span><div id="tailCounts" class="mt-1 leading-5">—</div></div>
+                  <div><span class="font-semibold text-slate-800">Acceptable</span><div id="acceptableTailCounts" class="mt-1 leading-5">—</div></div>
+                  <div><span class="font-semibold text-slate-800">Guardrails</span><div id="guardrailStats" class="mt-1 leading-5">—</div></div>
+                  <div><span class="font-semibold text-slate-800">Skip reasons</span><div id="skipReasons" class="mt-1 leading-5">—</div></div>
+                </div>
+              </div>
+            </div>
+            <div class="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-xs text-slate-600">
+              <div><span class="font-semibold text-slate-800">Profiles & warnings</span></div>
+              <div id="profileNote" class="mt-1 leading-5">—</div>
+              <div id="rateLimit" class="mt-2 text-rose-700"></div>
+              <div id="lastError" class="mt-1 text-rose-700"></div>
+            </div>
+          </section>
+
+
+          <section class="panel rounded-[24px] border border-white/15 p-5 shadow-soft text-slate-900">
+            <div class="flex items-start justify-between gap-4">
+              <div>
+                <div class="text-[11px] uppercase tracking-[0.18em] text-slate-500">Model lifecycle</div>
+                <h2 class="mt-1 text-lg font-semibold text-slate-950">Training</h2>
+              </div>
+              <div id="trainBadge" class="rounded-full bg-emerald-100 px-3 py-1 text-xs font-medium text-emerald-800">...</div>
+            </div>
+            <p class="mt-3 text-sm leading-6 text-slate-600">Trains Model A (touch probability, elastic-net) and Model B (path quality, LightGBM). Combined prob = P(touch) × P(clean | touch). Requires Alpaca keys and <span class="font-semibold text-slate-800">DEMO_MODE=false</span>.</p>
+            <div class="mt-4 flex gap-3">
+              <input id="adminPassword" type="password" placeholder="ADMIN_PASSWORD" class="flex-1 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none transition focus:border-cyan-400 focus:ring-4 focus:ring-cyan-100" />
+              <button id="startTraining" class="rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white shadow-lg shadow-emerald-600/20 transition hover:-translate-y-0.5 hover:bg-emerald-500">Start</button>
+            </div>
+            <div class="mt-4 space-y-3 text-sm">
+              <div class="rounded-2xl border border-slate-200 bg-white px-4 py-3 flex items-center justify-between gap-3"><span class="text-slate-500">Status</span><span id="trainRunning" class="font-semibold text-slate-950">...</span></div>
+              <div class="rounded-2xl border border-slate-200 bg-white px-4 py-3 flex items-center justify-between gap-3"><span class="text-slate-500">Started</span><span id="trainStarted" class="font-medium text-right text-slate-950">...</span></div>
+              <div class="rounded-2xl border border-slate-200 bg-white px-4 py-3 flex items-center justify-between gap-3"><span class="text-slate-500">Finished</span><span id="trainFinished" class="font-medium text-right text-slate-950">...</span></div>
+            </div>
+            <div id="trainError" class="mt-3 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs text-rose-700 hidden"></div>
+          </section>
+        </div>
+
+        <section class="panel rounded-[24px] border border-white/15 p-5 shadow-soft text-slate-900 mt-5">
+          <div class="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+            <div>
+              <div class="text-[11px] uppercase tracking-[0.18em] text-slate-500">Primary operator view</div>
+              <h2 class="mt-1 text-lg font-semibold text-slate-950">Scanner results</h2>
+              <p class="mt-1 text-sm text-slate-600">Focused operator view. The table now keeps the columns that matter most for live decisions: decision rank, price context, live probabilities, setup, signal quality, downside, risk, and the core reasons. Prob 1% and Touch are live, regime-adjusted operator values.</p>
+            </div>
+            <div class="grid grid-cols-2 gap-3 sm:grid-cols-4">
+              <div class="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                <div class="text-[11px] uppercase tracking-[0.16em] text-slate-500">Last run</div>
+                <div id="lastRun" class="mt-1 text-sm font-semibold text-slate-950">...</div>
+              </div>
+              <div class="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                <div class="text-[11px] uppercase tracking-[0.16em] text-slate-500">Touch tail</div>
+                <div id="touchTailStatus" class="mt-1 text-sm font-semibold text-slate-950">...</div>
+              </div>
+              <div class="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                <div class="text-[11px] uppercase tracking-[0.16em] text-slate-500">Model source</div>
+                <div id="modelSource" class="mt-1 text-sm font-semibold text-slate-950">...</div>
+              </div>
+              <div class="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                <div class="text-[11px] uppercase tracking-[0.16em] text-slate-500">Probability</div>
+                <div id="probContract" class="mt-1 text-sm font-semibold text-slate-950">...</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="mt-4 overflow-hidden rounded-[22px] border border-slate-200 bg-white">
+            <div class="overflow-x-auto overflow-y-auto max-h-[760px]">
+              <table class="min-w-[1450px] text-sm">
+                <thead class="sticky top-0 z-10 border-b border-slate-200 bg-slate-50/95 text-left text-xs font-semibold uppercase tracking-[0.16em] text-slate-500 backdrop-blur">
+                  <tr>
+                    <th class="px-4 py-3 pr-4 cursor-pointer whitespace-nowrap" data-sort="relative_strength_rank">RS rank</th>
+                    <th class="px-4 py-3 pr-4 cursor-pointer whitespace-nowrap" data-sort="symbol">Symbol</th>
+                    <th class="px-4 py-3 pr-4 cursor-pointer whitespace-nowrap" data-sort="price">Price</th>
+                    <th class="px-4 py-3 pr-4 whitespace-nowrap">VWAP</th>
+                    <th class="px-4 py-3 pr-4 cursor-pointer whitespace-nowrap" data-sort="prob_1">Prob 1%</th>
+                    <th class="px-4 py-3 pr-4 cursor-pointer whitespace-nowrap" data-sort="prob_touch">Touch</th>
+                    <th class="px-4 py-3 pr-4 cursor-pointer whitespace-nowrap" data-sort="prob_path">Path</th>
+                    <th class="px-4 py-3 pr-4 whitespace-nowrap">Setup</th>
+                    <th class="px-4 py-3 pr-4 whitespace-nowrap">Signal</th>
+                    <th class="px-4 py-3 pr-4 cursor-pointer whitespace-nowrap" data-sort="downside_risk">Downside</th>
+                    <th class="px-4 py-3 pr-4 whitespace-nowrap">Risk</th>
+                    <th class="px-4 py-3 pr-4 whitespace-nowrap">Reasons</th>
+                  </tr>
+                </thead>
+                <tbody id="rows" class="divide-y divide-slate-100"></tbody>
+              </table>
+            </div>
+          </div>
+          <div id="emptyState" class="mt-4 hidden rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-sm text-slate-600">No rows yet. If market is open, wait for the next scan; otherwise this shows the last cached Stage 2 candidate set.</div>
+        </section>
+
+        <section class="panel rounded-[24px] border border-white/15 p-5 shadow-soft text-slate-900 mt-5">
+          <div class="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+            <div>
+              <div class="text-[11px] uppercase tracking-[0.18em] text-slate-500">Secondary operator view</div>
+              <h2 class="mt-1 text-lg font-semibold text-slate-950">Watchlist rescue lane</h2>
+              <p class="mt-1 text-sm text-slate-600">Near-threshold rows worth watching when the tail is still unvalidated. The table is streamlined to show only the fields that matter for follow-up.</p>
+            </div>
+            <div class="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm">
+              <div class="text-[11px] uppercase tracking-[0.16em] text-amber-700">Rows</div>
+              <div id="watchlistCount" class="mt-1 font-semibold text-amber-900">0</div>
+            </div>
+          </div>
+          <div class="mt-4 overflow-hidden rounded-[22px] border border-slate-200 bg-white">
+            <div class="overflow-x-auto overflow-y-auto max-h-[340px]">
+              <table class="min-w-[900px] text-sm">
+                <thead class="sticky top-0 z-10 border-b border-slate-200 bg-slate-50/95 text-left text-xs font-semibold uppercase tracking-[0.16em] text-slate-500 backdrop-blur">
+                  <tr>
+                    <th class="px-4 py-3 pr-4">RS rank</th>
+                    <th class="px-4 py-3 pr-4">Symbol</th>
+                    <th class="px-4 py-3 pr-4">Price</th>
+                    <th class="px-4 py-3 pr-4">Touch</th>
+                    <th class="px-4 py-3 pr-4">Path</th>
+                    <th class="px-4 py-3 pr-4">Setup</th>
+                    <th class="px-4 py-3 pr-4 whitespace-nowrap">Why watch</th>
+                  </tr>
+                </thead>
+                <tbody id="watchlistRows" class="divide-y divide-slate-100"></tbody>
+              </table>
+            </div>
+          </div>
+          <div id="watchlistEmpty" class="mt-4 hidden rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-sm text-slate-600">No rescue watchlist rows on the latest scan.</div>
+        </section>
+
+        <section class="panel rounded-[24px] border border-white/15 p-5 shadow-soft text-slate-900 mt-5">
+          <div class="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+            <div>
+              <div class="text-[11px] uppercase tracking-[0.18em] text-slate-500">Feedback loop</div>
+              <h2 class="mt-1 text-lg font-semibold text-slate-950">Diagnostic journal</h2>
+              <p class="mt-1 text-sm text-slate-600">Automatic live snapshots, tracked names, and post-close verdicts for path quality.</p>
+            </div>
+            <div class="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm">
+              <div class="text-[11px] uppercase tracking-[0.16em] text-slate-500">Trade day</div>
+              <div id="diagTradeDate" class="mt-1 font-semibold text-slate-950">—</div>
+            </div>
+          </div>
+
+          <div class="mt-4 grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-8 text-sm">
+            <div class="rounded-2xl border border-slate-200 bg-white p-4"><div class="text-xs uppercase tracking-[0.16em] text-slate-500">Snapshots</div><div id="diagSnapshots" class="mt-2 text-2xl font-semibold text-slate-950">0</div></div>
+            <div class="rounded-2xl border border-slate-200 bg-white p-4"><div class="text-xs uppercase tracking-[0.16em] text-slate-500">Tracked</div><div id="diagTracked" class="mt-2 text-2xl font-semibold text-slate-950">0</div></div>
+            <div class="rounded-2xl border border-slate-200 bg-white p-4"><div class="text-xs uppercase tracking-[0.16em] text-slate-500">Signaled symbols</div><div id="diagCapBound" class="mt-2 text-2xl font-semibold text-slate-950">0</div></div>
+            <div class="rounded-2xl border border-slate-200 bg-white p-4"><div class="text-xs uppercase tracking-[0.16em] text-slate-500">Evaluated</div><div id="diagEvaluated" class="mt-2 text-2xl font-semibold text-slate-950">No</div></div>
+            <div class="rounded-2xl border border-emerald-200 bg-emerald-50 p-4"><div class="text-xs uppercase tracking-[0.16em] text-emerald-700">Clean touch</div><div id="diagClean" class="mt-2 text-2xl font-semibold text-emerald-900">0</div></div>
+            <div class="rounded-2xl border border-rose-200 bg-rose-50 p-4"><div class="text-xs uppercase tracking-[0.16em] text-rose-700">Ugly touch</div><div id="diagUgly" class="mt-2 text-2xl font-semibold text-rose-900">0</div></div>
+            <div class="rounded-2xl border border-slate-200 bg-slate-50 p-4"><div class="text-xs uppercase tracking-[0.16em] text-slate-600">No touch</div><div id="diagNoTouch" class="mt-2 text-2xl font-semibold text-slate-900">0</div></div>
+            <div class="rounded-2xl border border-cyan-200 bg-cyan-50 p-4"><div class="text-xs uppercase tracking-[0.16em] text-cyan-700">Worth review</div><div id="diagWorth" class="mt-2 text-2xl font-semibold text-cyan-900">0</div></div>
+          </div>
+
+          <div class="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-600">Latest snapshot: <span id="diagLatestSnapshot" class="font-semibold text-slate-800">—</span></div>
+
+          <div class="mt-5 grid grid-cols-1 gap-5 xl:grid-cols-2">
+            <div>
+              <h3 class="text-sm font-semibold text-slate-900">Tracked names</h3>
+              <div class="mt-2 overflow-hidden rounded-[22px] border border-slate-200 bg-white">
+                <div class="overflow-x-auto overflow-y-auto max-h-[420px]">
+                  <table class="min-w-[920px] text-sm">
+                    <thead class="sticky top-0 z-10 border-b border-slate-200 bg-slate-50/95 text-left text-xs font-semibold uppercase tracking-[0.16em] text-slate-500 backdrop-blur">
+                      <tr>
+                        <th class="px-4 py-3 pr-4">Symbol</th>
+                        <th class="px-4 py-3 pr-4">Best touch</th>
+                        <th class="px-4 py-3 pr-4">Best combined</th>
+                        <th class="px-4 py-3 pr-4">Signal count</th>
+                        <th class="px-4 py-3 pr-4">Max downside</th>
+                        <th class="px-4 py-3 pr-4 whitespace-nowrap">Risk notes</th>
+                      </tr>
+                    </thead>
+                    <tbody id="diagTrackedRows" class="divide-y divide-slate-100"></tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+            <div>
+              <div class="flex items-center justify-between gap-3">
+                <h3 class="text-sm font-semibold text-slate-900">Post-close review</h3>
+                <button id="downloadReviewPack" class="inline-flex items-center rounded-2xl border border-cyan-200 bg-cyan-50 px-4 py-2 text-sm font-semibold text-cyan-900 transition hover:-translate-y-0.5 hover:border-cyan-300 hover:bg-cyan-100">Download review pack</button>
+              </div>
+              <div class="mt-2 overflow-hidden rounded-[22px] border border-slate-200 bg-white">
+                <div class="overflow-x-auto overflow-y-auto max-h-[420px]">
+                  <table class="min-w-[980px] text-sm">
+                    <thead class="sticky top-0 z-10 border-b border-slate-200 bg-slate-50/95 text-left text-xs font-semibold uppercase tracking-[0.16em] text-slate-500 backdrop-blur">
+                      <tr>
+                        <th class="px-4 py-3 pr-4">Symbol</th>
+                        <th class="px-4 py-3 pr-4">Best Prob</th>
+                        <th class="px-4 py-3 pr-4">Touch +1%</th>
+                        <th class="px-4 py-3 pr-4">Path</th>
+                        <th class="px-4 py-3 pr-4">MAE before touch</th>
+                        <th class="px-4 py-3 pr-4">Close vs scan</th>
+                        <th class="px-4 py-3 pr-4">Bucket</th>
+                      </tr>
+                    </thead>
+                    <tbody id="diagEvaluationRows" class="divide-y divide-slate-100"></tbody>
+                  </table>
+                </div>
+              </div>
+              <div id="diagEmpty" class="mt-3 hidden rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-sm text-slate-600">No diagnostic review yet for the latest tracked trade day.</div>
+            </div>
+          </div>
+        </section>
+      </div>
+    </div>
+  </div>
+  <script src="/static/app.js"></script>
+</body>
+</html>
